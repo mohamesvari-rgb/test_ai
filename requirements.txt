@@ -1,0 +1,14 @@
+# Core LLM SDK
+anthropic>=0.40.0
+
+# Word document reading & writing
+python-docx>=1.1.0
+
+# Data handling / tables
+pandas>=2.0.0
+
+# Optional: nicer console output for the CLI
+rich>=13.0.0
+
+# Optional: .env support for API keys
+python-dotenv>=1.0.0

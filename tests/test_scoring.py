@@ -1,0 +1,126 @@
+"""
+Unit tests for the scoring engine, rubric integrity, and end-to-end pipeline
+(using the offline MockLLMClient so tests need no API key or network).
+
+Run:  python -m pytest tests/ -v      (or)   python tests/test_scoring.py
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Make the package importable when running the file directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scientific_evaluator.config import RUBRIC
+from scientific_evaluator.models import Challenge, Submission
+from scientific_evaluator.scoring_engine import (
+    build_criterion_scores,
+    compute_total,
+    integrity_penalty,
+)
+from scientific_evaluator.llm_client import MockLLMClient, extract_json
+from scientific_evaluator.agent import ScientificEvaluationAgent
+
+
+def test_rubric_weights_sum_to_100():
+    assert abs(sum(c.max_points for c in RUBRIC) - 100.0) < 1e-6
+
+
+def test_perfect_scores_give_100():
+    raw = {c.key: {"raw_score": 10, "justification": "x"} for c in RUBRIC}
+    scores = build_criterion_scores(raw)
+    assert abs(compute_total(scores) - 100.0) < 1e-6
+
+
+def test_zero_scores_give_0():
+    raw = {c.key: {"raw_score": 0, "justification": ""} for c in RUBRIC}
+    scores = build_criterion_scores(raw)
+    assert compute_total(scores) == 0.0
+
+
+def test_out_of_range_scores_are_clamped():
+    raw = {c.key: {"raw_score": 999, "justification": ""} for c in RUBRIC}
+    scores = build_criterion_scores(raw)
+    # Clamped to 10 each -> 100 total.
+    assert abs(compute_total(scores) - 100.0) < 1e-6
+
+
+def test_missing_criterion_defaults_to_zero():
+    raw = {RUBRIC[0].key: {"raw_score": 10, "justification": ""}}
+    scores = build_criterion_scores(raw)
+    assert len(scores) == len(RUBRIC)
+    # Only the first criterion contributes.
+    assert abs(compute_total(scores) - RUBRIC[0].max_points) < 1e-6
+
+
+def test_integrity_penalty_is_bounded():
+    assert integrity_penalty([]) == 0.0
+    assert integrity_penalty(["a"]) == 5.0
+    assert integrity_penalty(["a", "b", "c", "d", "e", "f"]) == 25.0  # capped
+
+
+def test_extract_json_handles_fences():
+    text = 'Here you go:\n```json\n{"a": 1, "b": [2,3]}\n```\nDone.'
+    data = extract_json(text)
+    assert data == {"a": 1, "b": [2, 3]}
+
+
+def test_weighted_points_math():
+    raw = {c.key: {"raw_score": 5, "justification": ""} for c in RUBRIC}
+    scores = build_criterion_scores(raw)
+    # 5/10 of every criterion -> 50.0
+    assert abs(compute_total(scores) - 50.0) < 1e-6
+
+
+def test_end_to_end_pipeline_with_mock():
+    challenge = Challenge(
+        title="Test challenge",
+        field="testing",
+        background="A background.",
+        objectives=["obj1", "obj2"],
+    )
+    subs = [
+        Submission(
+            participant_id=f"P{i}",
+            source_path=f"P{i}.docx",
+            raw_text=f"This is submission {i} with some scientific content.",
+            title=f"Title {i}",
+            word_count=8,
+        )
+        for i in range(3)
+    ]
+    agent = ScientificEvaluationAgent(challenge, MockLLMClient())
+    result = agent.run(subs)
+
+    # Every submission is evaluated and scored in range.
+    assert len(result.evaluations) == 3
+    for e in result.evaluations:
+        assert 0.0 <= e.total_score <= 100.0
+        assert len(e.criterion_scores) == len(RUBRIC)
+
+    # Ranking covers every participant exactly once.
+    assert sorted(result.comparison.ranking) == sorted(e.participant_id for e in subs)
+
+    # Synthesis and recommendation are produced.
+    assert result.synthesized_solution
+    assert result.final_recommendation
+
+
+if __name__ == "__main__":
+    # Minimal runner without pytest.
+    import traceback
+
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS  {t.__name__}")
+        except Exception:  # noqa: BLE001
+            failed += 1
+            print(f"FAIL  {t.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    raise SystemExit(1 if failed else 0)

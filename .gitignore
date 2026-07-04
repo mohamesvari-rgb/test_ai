@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+*.key
+
+# Generated outputs
+output/
+reports/
+*.docx
+!examples/**/*.docx
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

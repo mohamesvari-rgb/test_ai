@@ -1,0 +1,24 @@
+{
+  "title": "Low-Cost Early Detection of Crop Water Stress via Remote Sensing",
+  "field": "remote sensing / precision agriculture",
+  "background": "Smallholder farms in semi-arid regions lose significant yield to water stress that is detected too late. Satellite data is free but coarse; ground sensors are accurate but expensive to deploy at scale. There is a need for an affordable, scalable system that detects crop water stress days before visible symptoms appear, so farmers can act in time.",
+  "objectives": [
+    "Detect crop water stress at least 3-5 days before visible wilting.",
+    "Achieve field-level accuracy usable for irrigation decisions on smallholder plots (< 2 hectares).",
+    "Keep per-farm hardware and operating cost affordable for smallholders.",
+    "Provide actionable, interpretable alerts to non-expert users."
+  ],
+  "constraints": [
+    "Intermittent internet connectivity in target regions.",
+    "Limited on-farm power (solar / battery only).",
+    "No access to expensive hyperspectral satellites or manned aircraft.",
+    "Solution must scale to thousands of farms without per-farm calibration by an expert."
+  ],
+  "expected_outputs": [
+    "A clear system architecture (sensing + data + model + alerting).",
+    "A validation plan with quantified accuracy/lead-time targets.",
+    "A cost estimate per farm.",
+    "A deployment and scaling strategy."
+  ],
+  "evaluation_notes": "An excellent answer fuses free multispectral satellite data (e.g. Sentinel-2) with a small number of cheap ground/edge sensors, uses a physically-grounded or well-validated ML model, quantifies lead time and accuracy, addresses connectivity/power constraints explicitly, and gives a credible cost and scaling plan. Reward genuine novelty in sensor fusion, self-calibration, or interpretability. Penalize hand-waving, ignored constraints, and unvalidated accuracy claims."
+}
