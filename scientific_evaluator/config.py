@@ -206,7 +206,9 @@ class Settings:
     """Runtime settings for the agent."""
 
     # LLM model used for evaluation. Defaults to a capable Claude model.
-    model: str = "claude-opus-4-8"
+    # Alternatives: "claude-sonnet-5" (cheaper, still strong), "claude-haiku-4-5"
+    # (cheapest; not recommended for scientific judgment).
+    model: str = "claude-opus-5"
     # Lower temperature -> more consistent, repeatable scoring.
     temperature: float = 0.2
     max_tokens: int = 4096

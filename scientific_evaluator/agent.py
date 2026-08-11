@@ -33,7 +33,7 @@ from .innovation_extractor import InnovationExtractor
 from .llm_client import BaseLLMClient
 from .models import Challenge, EvaluationResult, Submission, SubmissionEvaluation
 from .persian_report import render_blocks_to_docx
-from .pdf_report import render_blocks_to_pdf
+from .pdf_report import pdf_engine_error_message, render_blocks_to_pdf
 from .preprocessing import build_submission
 from .report_builder import build_report_blocks
 from .report_generator import MarkdownReportGenerator, WordReportGenerator
@@ -189,7 +189,18 @@ class ScientificEvaluationAgent:
                 )
             if fmt in ("pdf", "both"):
                 self._progress("Rendering Persian PDF report (.pdf)")
-                written.append(
-                    render_blocks_to_pdf(blocks, out_path.with_suffix(".pdf"))
-                )
+                try:
+                    written.append(
+                        render_blocks_to_pdf(blocks, out_path.with_suffix(".pdf"))
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # The Word file is already written and is the primary
+                    # deliverable. Losing the whole run because the PDF engine
+                    # is not installed would be the wrong trade-off, so degrade
+                    # to Word-only and explain how to fix the PDF path.
+                    message = pdf_engine_error_message(exc)
+                    if fmt == "pdf":
+                        raise RuntimeError(message) from exc
+                    self._progress(f"WARNING: {message}")
+                    self._progress("Continuing with the Word (.docx) report only.")
         return written

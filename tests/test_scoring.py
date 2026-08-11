@@ -184,6 +184,52 @@ def test_persian_report_export_docx(tmp_path=None):
     assert len(doc.tables) >= 4                    # rubric+scores+innovation+more
 
 
+def test_word_still_delivered_when_pdf_engine_missing():
+    """Regression: a missing GTK/WeasyPrint stack must not lose the whole run.
+
+    Reproduces the Windows failure
+    ``OSError: cannot load library 'libgobject-2.0-0'`` and asserts that
+    fmt='both' still returns the Word report plus an actionable warning.
+    """
+    import tempfile
+    from scientific_evaluator import agent as agent_mod
+
+    _agent, result, _subs = _demo_result(2)
+    messages = []
+    _agent._progress = messages.append
+
+    original = agent_mod.render_blocks_to_pdf
+
+    def boom(_blocks, _path):
+        raise OSError("cannot load library 'libgobject-2.0-0': error 0x7e")
+
+    agent_mod.render_blocks_to_pdf = boom
+    try:
+        out = Path(tempfile.mkdtemp()) / "report"
+        written = _agent.export_report(result, out, fmt="both")
+    finally:
+        agent_mod.render_blocks_to_pdf = original
+
+    # The Word file survives and is returned.
+    assert len(written) == 1 and written[0].suffix == ".docx"
+    assert written[0].exists() and written[0].stat().st_size > 0
+
+    # The warning explains the fix rather than leaking a bare OSError.
+    warning = "\n".join(messages)
+    assert "WARNING" in warning
+    assert "Word only" in warning
+
+
+def test_pdf_error_message_is_actionable():
+    from scientific_evaluator.pdf_report import pdf_engine_error_message
+
+    msg = pdf_engine_error_message(
+        OSError("cannot load library 'libgobject-2.0-0': error 0x7e")
+    )
+    assert "GTK" in msg or "gtk" in msg          # names what is missing
+    assert "Word only" in msg                    # gives an immediate workaround
+
+
 def test_persian_report_export_pdf():
     """PDF export via weasyprint (skipped if weasyprint is unavailable)."""
     try:

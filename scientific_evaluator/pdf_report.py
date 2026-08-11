@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import html
+import sys
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -142,6 +143,49 @@ def _block_html(block: Block) -> str:
         return f"<img src='{uri}'/>{cap}"
 
     return ""
+
+
+def pdf_engine_error_message(exc: Exception) -> str:
+    """Turn a WeasyPrint/GTK failure into an actionable instruction.
+
+    The raw failure is a bare ``OSError: cannot load library
+    'libgobject-2.0-0'``, which says nothing about what to install. PDF export
+    needs WeasyPrint plus its native GTK/Pango/Cairo libraries; those are a
+    separate, per-OS install.
+    """
+    text = str(exc)
+    looks_like_missing_native_libs = (
+        isinstance(exc, (OSError, ImportError))
+        or "libgobject" in text
+        or "libpango" in text
+        or "cannot load library" in text
+    )
+    if not looks_like_missing_native_libs:
+        return f"PDF export failed: {type(exc).__name__}: {exc}"
+
+    if sys.platform.startswith("win"):
+        how = (
+            "On Windows, install the GTK3 runtime, then restart your terminal:\n"
+            "  https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases\n"
+            "  (download the latest gtk3-runtime-...-ts-win64.exe and tick "
+            "\"Set up PATH environment variable\")"
+        )
+    elif sys.platform == "darwin":
+        how = "On macOS, run:  brew install pango cairo gdk-pixbuf libffi"
+    else:
+        how = (
+            "On Linux, run:\n"
+            "  sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 "
+            "libcairo2 libgdk-pixbuf-2.0-0"
+        )
+    return (
+        "PDF export needs the native GTK/Pango/Cairo libraries used by "
+        f"WeasyPrint, and they were not found ({text.splitlines()[0]}).\n"
+        f"{how}\n"
+        "Until then, choose \"Word only (.docx)\" — the Word report has the "
+        "same content, and you can export a PDF from Word itself "
+        "(File > Save As > PDF)."
+    )
 
 
 def render_blocks_to_pdf(blocks: List[Block], out_path: Union[str, Path]) -> Path:
