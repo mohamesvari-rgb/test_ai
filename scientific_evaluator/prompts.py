@@ -20,6 +20,17 @@ from .config import RUBRIC, SETTINGS
 from .models import Challenge, Submission, SubmissionEvaluation
 
 
+def _json(obj) -> str:
+    """Serialize a prompt payload for the model.
+
+    ``ensure_ascii=False`` is essential: participant ids (and any Persian text)
+    must reach the model as real characters. Escaped as ``\\uXXXX`` the model
+    echoes back ids that no longer match the real ones, so they get dropped from
+    the ranking and the report order becomes incoherent.
+    """
+    return json.dumps(obj, indent=2, ensure_ascii=False)
+
+
 def _language_directive() -> str:
     """Instruction that pins the language of all human-readable output.
 
@@ -105,7 +116,7 @@ def build_scoring_prompt(challenge: Challenge, submission: Submission) -> Tuple[
         f"{submission.raw_text}\n"
         "--- END SUBMISSION TEXT ---\n\n"
         "Return JSON with EXACTLY this schema:\n"
-        f"{json.dumps(schema, indent=2)}"
+        f"{_json(schema)}"
     )
     return system, user
 
@@ -137,7 +148,7 @@ def build_innovation_prompt(challenge: Challenge, submission: Submission) -> Tup
         f"=== SUBMISSION (participant_id: {submission.participant_id}) ===\n"
         f"{submission.raw_text}\n\n"
         "Return JSON with EXACTLY this schema (each value a list of short strings):\n"
-        f"{json.dumps(schema, indent=2)}"
+        f"{_json(schema)}"
     )
     return system, user
 
@@ -193,9 +204,9 @@ def build_comparison_prompt(
         "=== CHALLENGE ===\n"
         f"{challenge.to_prompt_block()}\n\n"
         "=== EVALUATION DIGESTS ===\n"
-        f"{json.dumps(digest, indent=2)}\n\n"
+        f"{_json(digest)}\n\n"
         "Return JSON with EXACTLY this schema:\n"
-        f"{json.dumps(schema, indent=2)}"
+        f"{_json(schema)}"
     )
     return system, user
 
@@ -253,11 +264,11 @@ def build_synthesis_prompt(
         "=== CHALLENGE ===\n"
         f"{challenge.to_prompt_block()}\n\n"
         "=== EXISTING IDEAS + THEIR IMPROVEMENT SOLUTIONS (per submission) ===\n"
-        f"{json.dumps(ingredients, indent=2, ensure_ascii=False)}\n\n"
+        f"{_json(ingredients)}\n\n"
         "=== RANKING RATIONALE ===\n"
         f"{comparison.rationale}\n\n"
         "=== COMPLEMENTARY IDEAS TO FUSE ===\n"
-        f"{json.dumps(comparison.complementary_ideas, indent=2, ensure_ascii=False)}\n\n"
+        f"{_json(comparison.complementary_ideas)}\n\n"
         "Now write the single integrated, comprehensive solution, combining and "
         "improving the existing ideas above."
     )
@@ -304,9 +315,9 @@ def build_improvement_prompt(
         f"=== SUBMISSION (participant_id: {submission.participant_id}) ===\n"
         f"{submission.raw_text}\n\n"
         "=== IDEAS TO IMPROVE (one entry per idea) ===\n"
-        f"{json.dumps(ideas, indent=2, ensure_ascii=False)}\n\n"
+        f"{_json(ideas)}\n\n"
         "Return JSON with EXACTLY this schema:\n"
-        f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
+        f"{_json(schema)}"
     )
     return system, user
 
@@ -333,7 +344,7 @@ def build_recommendation_prompt(
         "=== CHALLENGE ===\n"
         f"{challenge.to_prompt_block()}\n\n"
         "=== FINAL SCORES ===\n"
-        f"{json.dumps(ranked, indent=2)}\n\n"
+        f"{_json(ranked)}\n\n"
         "=== RANKING RATIONALE ===\n"
         f"{comparison.rationale}\n\n"
         "Write the final recommendation."

@@ -172,17 +172,47 @@ sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
 
 # 2. Python dependencies
 pip install -r requirements.txt
+```
 
-# 3. (Demo) create sample EXISTING participant .docx files
+### Option A — Graphical interface (easiest)
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...    # or paste the key into the form
+python gui.py                          # opens http://127.0.0.1:5000
+```
+
+A browser window opens with a three-step page:
+
+1. **Define the challenge** — title, field, background, objectives, constraints,
+   expected outputs, reviewer notes (a **Load example** button fills the form).
+2. **Upload the answers** — drag & drop or pick multiple `.docx` files. The file
+   name becomes the participant's name in the report; **Persian file names work**.
+3. **Output options** — report language (Persian/English), format (Word + PDF),
+   model, API key, and an **Offline demo** checkbox to preview the layout with no
+   API key.
+
+Press **Run evaluation**; a live progress log streams while it works, then the
+ranking table and **download buttons** for `report.docx`, `report.pdf` and
+`result.json` appear. **Clear files from server** deletes the uploads and
+reports when you are done.
+
+Useful flags: `python gui.py --port 8080`, `--no-browser`, `--work-dir ./jobs`.
+The server binds to `127.0.0.1` (this machine only) and has **no
+authentication** — only use `--host 0.0.0.0` on a network you trust.
+
+### Option B — Command line
+
+```bash
+# (Demo) create sample EXISTING participant .docx files
 python examples/generate_sample_submissions.py
 
-# 4a. Offline demo with the deterministic mock backend (no API key, Persian)
+# Offline demo with the deterministic mock backend (no API key, Persian)
 python main.py \
   --challenge config/challenge_example.json \
   --submissions examples/submissions \
   --out output/report --format both --mock
 
-# 4b. Real evaluation with Claude
+# Real evaluation with Claude
 export ANTHROPIC_API_KEY=sk-ant-...
 python main.py \
   --challenge config/challenge_example.json \
@@ -269,6 +299,11 @@ run; the mock backend and tests need no network or API key.
 test_ai/
 ├── README.md
 ├── requirements.txt
+├── gui.py                      # launcher for the web GUI
+├── webapp/                     # Flask GUI (define challenge, upload, download)
+│   ├── app.py                  #   routes + upload handling (unicode-safe names)
+│   ├── jobs.py                 #   background job runner + progress log
+│   └── templates/index.html    #   single-page UI
 ├── main.py                     # CLI (--format both|docx|pdf|md, --lang, --mock)
 ├── config/challenge_example.json
 ├── fonts/                      # (optional) drop "B Nazanin.ttf" here for exact PDF fonts
@@ -294,7 +329,15 @@ test_ai/
 │   ├── pdf_report.py           # weasyprint PDF renderer               (#5)
 │   ├── report_generator.py     # optional English Word/Markdown renderer
 │   └── agent.py                # orchestrator
-└── tests/test_scoring.py       # unit + end-to-end (mock) tests
+└── tests/
+    ├── test_scoring.py         # rubric, scoring math, pipeline, docx/pdf export
+    └── test_webapp.py          # GUI flow: upload → job → download
+```
+
+Run the tests (no API key or network needed):
+
+```bash
+python tests/test_scoring.py && python tests/test_webapp.py
 ```
 
 **Scoring math:** `total = clamp(Σ (raw/10 × weight) − penalty, 0, 100)`.
@@ -371,3 +414,7 @@ in the PDF.
   names it and the PDF falls back to Vazirmatn unless you supply `B Nazanin.ttf`.
 - Very long submissions are truncated (head+tail) to `SETTINGS.max_submission_chars`;
   raise it or add chunking for long documents.
+- **The GUI is a local single-user tool.** It has no authentication, runs one
+  evaluation at a time (the agent mutates process-wide settings), and stores
+  uploads/reports in a temp directory until you press “Clear”. Do not expose it
+  to an untrusted network.

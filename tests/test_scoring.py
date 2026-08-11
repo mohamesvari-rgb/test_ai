@@ -121,6 +121,44 @@ def test_idea_improvements_are_generated():
             assert imp.improvements  # at least one improvement solution
 
 
+def test_mock_ranking_is_ordered_by_score():
+    """The offline demo's ranking must not contradict its own score table."""
+    _agent, result, _subs = _demo_result(4)
+    ranked = result.ranked_evaluations()
+    scores = [e.total_score for e in ranked]
+    assert scores == sorted(scores, reverse=True), (
+        f"ranking is not strongest-first: {[(e.participant_id, e.total_score) for e in ranked]}"
+    )
+
+
+def test_persian_participant_ids_survive_ranking():
+    """Regression: non-ASCII ids must not be \\uXXXX-escaped into the prompt.
+
+    When they were, the model echoed back ids that no longer matched the real
+    ones, they were dropped from the ranking, and the report order became
+    incoherent (rank 1 scoring lower than rank 2).
+    """
+    from scientific_evaluator.prompts import build_comparison_prompt
+
+    challenge = Challenge("t", "f", "b", ["o1"])
+    subs = [
+        Submission("علی_رضایی", "a.docx", "متن علمی با روش و اعتبارسنجی.", "پاسخ", 6),
+        Submission("Sara_Team", "b.docx", "A scientific answer.", "Ans", 4),
+        Submission("محمد_احمدی", "c.docx", "متن دیگر.", "پاسخ ۲", 3),
+    ]
+    agent = ScientificEvaluationAgent(challenge, MockLLMClient())
+    result = agent.run(subs)
+
+    # Ids reach the prompt as real characters.
+    _sys, user = build_comparison_prompt(challenge, result.evaluations)
+    assert "علی_رضایی" in user and "\\u0639" not in user
+
+    # Every participant appears exactly once, ordered strongest-first.
+    assert sorted(result.comparison.ranking) == sorted(s.participant_id for s in subs)
+    scores = [e.total_score for e in result.ranked_evaluations()]
+    assert scores == sorted(scores, reverse=True), scores
+
+
 def test_comparison_has_salient_and_distinctive_points():
     _agent, result, subs = _demo_result(3)
     comp = result.comparison

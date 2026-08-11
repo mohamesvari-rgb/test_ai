@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scientific Evaluation Agent</title>
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --ink: #1a2230;
+    --muted: #5b6878;
+    --line: #dde3ec;
+    --accent: #1f4e79;
+    --accent-soft: #e8eff7;
+    --ok: #1f7a4d;
+    --err: #b03a3a;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161c; --card: #1a2029; --ink: #e8edf4; --muted: #9aa7b8;
+      --line: #2c3543; --accent: #6fa8dc; --accent-soft: #22303f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    background: var(--accent); color: #fff; padding: 22px 20px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  header p  { margin: 0; opacity: .9; font-size: .92rem; }
+  main { max-width: 900px; margin: 0 auto; padding: 22px 20px 60px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 20px; margin-bottom: 18px;
+  }
+  .card h2 {
+    margin: 0 0 4px; font-size: 1.05rem; color: var(--accent);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .step {
+    background: var(--accent); color: #fff; width: 24px; height: 24px;
+    border-radius: 50%; display: inline-flex; align-items: center;
+    justify-content: center; font-size: .82rem; flex: none;
+  }
+  .hint { color: var(--muted); font-size: .85rem; margin: 0 0 14px; }
+  label { display: block; font-weight: 600; font-size: .88rem; margin: 12px 0 4px; }
+  .req::after { content: " *"; color: var(--err); }
+  input[type=text], input[type=password], textarea, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--bg); color: var(--ink);
+    font: inherit; font-size: .92rem;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  input:focus, textarea:focus, select:focus {
+    outline: 2px solid var(--accent); outline-offset: -1px;
+  }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 220px; }
+  .drop {
+    border: 2px dashed var(--line); border-radius: var(--radius);
+    padding: 26px; text-align: center; cursor: pointer;
+    background: var(--bg); transition: .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { color: var(--accent); }
+  #fileList { list-style: none; padding: 0; margin: 12px 0 0; }
+  #fileList li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 11px; border: 1px solid var(--line); border-radius: 7px;
+    margin-bottom: 6px; font-size: .88rem; background: var(--bg);
+  }
+  #fileList button {
+    background: none; border: none; color: var(--err); cursor: pointer;
+    font-size: 1.1rem; line-height: 1; padding: 0 4px;
+  }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .check input { width: 16px; height: 16px; }
+  .check label { margin: 0; font-weight: 500; }
+  .btn {
+    background: var(--accent); color: #fff; border: none; padding: 12px 26px;
+    font-size: 1rem; font-weight: 600; border-radius: 7px; cursor: pointer;
+    width: 100%;
+  }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn.secondary {
+    background: none; color: var(--accent); border: 1px solid var(--accent);
+    width: auto; padding: 6px 14px; font-size: .85rem;
+  }
+  #log {
+    background: #0e1620; color: #c9e2ff; border-radius: 7px; padding: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .82rem; max-height: 240px; overflow-y: auto; white-space: pre-wrap;
+  }
+  .spinner {
+    width: 15px; height: 15px; border: 2px solid var(--accent-soft);
+    border-top-color: var(--accent); border-radius: 50%;
+    display: inline-block; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .alert {
+    padding: 11px 14px; border-radius: 7px; margin-bottom: 14px; font-size: .9rem;
+    border: 1px solid;
+  }
+  .alert.error { background: #fdeaea; border-color: #e5b4b4; color: #7d2020; }
+  @media (prefers-color-scheme: dark) {
+    .alert.error { background: #3a1f1f; border-color: #6a3333; color: #f2c4c4; }
+  }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; }
+  th { background: var(--accent-soft); color: var(--accent); }
+  .dl { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .dl a {
+    background: var(--ok); color: #fff; padding: 10px 18px; border-radius: 7px;
+    text-decoration: none; font-weight: 600; font-size: .9rem;
+  }
+  .dl a.alt { background: var(--accent); }
+  .dl a.plain { background: var(--muted); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scientific Evaluation Agent</h1>
+  <p>Define a challenge, upload the participants' answers, and download the evaluation report.</p>
+</header>
+
+<main>
+  <div id="alert" class="alert error hidden"></div>
+
+  <form id="form">
+    <!-- STEP 1: challenge -->
+    <section class="card">
+      <h2><span class="step">1</span> Define the challenge</h2>
+      <p class="hint">
+        Describe the problem the participants were asked to solve.
+        <button type="button" class="btn secondary" id="loadExample">Load example</button>
+      </p>
+
+      <div class="row">
+        <div>
+          <label class="req" for="title">Title</label>
+          <input type="text" id="title" name="title" placeholder="e.g. Early detection of crop water stress">
+        </div>
+        <div>
+          <label class="req" for="field">Field</label>
+          <input type="text" id="field" name="field" placeholder="e.g. remote sensing / medicine / energy">
+        </div>
+      </div>
+
+      <label class="req" for="background">Background / problem statement</label>
+      <textarea id="background" name="background"
+        placeholder="Context of the problem, why it matters, what is currently missing."></textarea>
+
+      <label class="req" for="objectives">Objectives <span style="font-weight:400;color:var(--muted)">(one per line)</span></label>
+      <textarea id="objectives" name="objectives"
+        placeholder="Detect stress 3-5 days before visible symptoms&#10;Keep cost affordable for smallholders"></textarea>
+
+      <label for="constraints">Constraints <span style="font-weight:400;color:var(--muted)">(one per line, optional)</span></label>
+      <textarea id="constraints" name="constraints"
+        placeholder="Intermittent internet connectivity&#10;Solar / battery power only"></textarea>
+
+      <label for="expected_outputs">Expected outputs <span style="font-weight:400;color:var(--muted)">(one per line, optional)</span></label>
+      <textarea id="expected_outputs" name="expected_outputs"
+        placeholder="A clear system architecture&#10;A validation plan with accuracy targets"></textarea>
+
+      <label for="evaluation_notes">Reviewer notes <span style="font-weight:400;color:var(--muted)">(optional, but improves grading a lot)</span></label>
+      <textarea id="evaluation_notes" name="evaluation_notes"
+        placeholder="What an excellent answer looks like, and what should be penalized."></textarea>
+    </section>
+
+    <!-- STEP 2: uploads -->
+    <section class="card">
+      <h2><span class="step">2</span> Upload the answers</h2>
+      <p class="hint">
+        Word <code>.docx</code> files only — one per participant.
+        The file name becomes the participant's name in the report
+        (e.g. <code>Ali_Rezaei.docx</code>). Persian file names are fine.
+      </p>
+      <div class="drop" id="drop">
+        <p style="margin:0"><strong>Click to choose files</strong> or drag them here</p>
+        <p class="hint" style="margin:6px 0 0">Multiple files supported · max 64 MB total</p>
+      </div>
+      <input type="file" id="files" name="submissions" accept=".docx" multiple class="hidden">
+      <ul id="fileList"></ul>
+    </section>
+
+    <!-- STEP 3: options -->
+    <section class="card">
+      <h2><span class="step">3</span> Output options</h2>
+      <div class="row">
+        <div>
+          <label for="language">Report language</label>
+          <select id="language" name="language">
+            <option value="Persian" selected>Persian (فارسی) — RTL, B Nazanin</option>
+            <option value="English">English</option>
+          </select>
+        </div>
+        <div>
+          <label for="format">File format</label>
+          <select id="format" name="format">
+            <option value="both" selected>Word + PDF</option>
+            <option value="docx">Word only (.docx)</option>
+            <option value="pdf">PDF only</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="model">Model <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+          <input type="text" id="model" name="model" placeholder="leave blank for the default">
+        </div>
+        <div>
+          <label for="api_key">Anthropic API key</label>
+          <input type="password" id="api_key" name="api_key"
+                 placeholder="{% if has_api_key %}using ANTHROPIC_API_KEY from the environment{% else %}sk-ant-…{% endif %}">
+        </div>
+      </div>
+
+      <div class="check">
+        <input type="checkbox" id="mock" name="mock">
+        <label for="mock">Offline demo (no API key, placeholder text — use to preview the layout)</label>
+      </div>
+    </section>
+
+    <button type="submit" class="btn" id="run">Run evaluation</button>
+  </form>
+
+  <!-- progress -->
+  <section class="card hidden" id="progressCard">
+    <h2><span class="spinner" id="spin"></span> Progress</h2>
+    <p class="hint" id="progressHint">This can take a few minutes — roughly 3 model calls per answer.</p>
+    <div id="log"></div>
+  </section>
+
+  <!-- results -->
+  <section class="card hidden" id="resultCard">
+    <h2>Results</h2>
+    <div id="ranking"></div>
+    <div class="dl" id="downloads"></div>
+    <p class="hint" style="margin-top:14px">
+      Files are stored temporarily on this machine. Download them, then use
+      “Clear” to delete the uploads and reports from the server.
+    </p>
+    <button type="button" class="btn secondary" id="clear">Clear files from server</button>
+  </section>
+</main>
+
+<script>
+(function () {
+  const form = document.getElementById('form');
+  const fileInput = document.getElementById('files');
+  const drop = document.getElementById('drop');
+  const fileList = document.getElementById('fileList');
+  const alertBox = document.getElementById('alert');
+  const runBtn = document.getElementById('run');
+  const progressCard = document.getElementById('progressCard');
+  const resultCard = document.getElementById('resultCard');
+  const log = document.getElementById('log');
+  const spin = document.getElementById('spin');
+  const progressHint = document.getElementById('progressHint');
+  let chosen = [];          // File objects
+  let jobId = null;
+  let timer = null;
+
+  // ---------- file picking ----------
+  drop.addEventListener('click', () => fileInput.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over');
+    addFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener('change', () => addFiles(fileInput.files));
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (!f.name.toLowerCase().endsWith('.docx')) {
+        showError('Skipped "' + f.name + '" — only .docx files are supported.');
+        continue;
+      }
+      if (!chosen.some(c => c.name === f.name && c.size === f.size)) chosen.push(f);
+    }
+    renderFiles();
+  }
+
+  function renderFiles() {
+    fileList.innerHTML = '';
+    chosen.forEach((f, i) => {
+      const li = document.createElement('li');
+      const kb = (f.size / 1024).toFixed(0);
+      const span = document.createElement('span');
+      span.textContent = f.name + '  ·  ' + kb + ' KB';
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.textContent = '×'; btn.title = 'Remove';
+      btn.onclick = () => { chosen.splice(i, 1); renderFiles(); };
+      li.append(span, btn);
+      fileList.appendChild(li);
+    });
+  }
+
+  // ---------- example ----------
+  document.getElementById('loadExample').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/example-challenge');
+      if (!r.ok) throw new Error('not available');
+      const c = await r.json();
+      document.getElementById('title').value = c.title || '';
+      document.getElementById('field').value = c.field || '';
+      document.getElementById('background').value = c.background || '';
+      document.getElementById('objectives').value = (c.objectives || []).join('\n');
+      document.getElementById('constraints').value = (c.constraints || []).join('\n');
+      document.getElementById('expected_outputs').value = (c.expected_outputs || []).join('\n');
+      document.getElementById('evaluation_notes').value = c.evaluation_notes || '';
+    } catch (e) { showError('Could not load the example challenge.'); }
+  });
+
+  // ---------- submit ----------
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    hideError();
+    if (chosen.length === 0) { showError('Please upload at least one .docx answer.'); return; }
+
+    const fd = new FormData(form);
+    fd.delete('submissions');
+    chosen.forEach(f => fd.append('submissions', f, f.name));
+
+    runBtn.disabled = true;
+    runBtn.textContent = 'Running…';
+    progressCard.classList.remove('hidden');
+    resultCard.classList.add('hidden');
+    spin.classList.remove('hidden');
+    progressHint.textContent = 'This can take a few minutes — roughly 3 model calls per answer.';
+    log.textContent = '';
+
+    try {
+      const r = await fetch('/api/evaluate', { method: 'POST', body: fd });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Request failed');
+      jobId = data.job_id;
+      timer = setInterval(poll, 1200);
+      poll();
+    } catch (err) {
+      showError(err.message);
+      resetRun();
+    }
+  });
+
+  // ---------- polling ----------
+  async function poll() {
+    if (!jobId) return;
+    try {
+      const r = await fetch('/api/status/' + jobId);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'status failed');
+      log.textContent = j.messages.join('\n');
+      log.scrollTop = log.scrollHeight;
+
+      if (j.status === 'done') {
+        clearInterval(timer); timer = null;
+        spin.classList.add('hidden');
+        progressHint.textContent = 'Finished.';
+        showResults(j);
+        resetRun();
+      } else if (j.status === 'error') {
+        clearInterval(timer); timer = null;
+        spin.classList.add('hidden');
+        progressHint.textContent = 'Failed.';
+        showError(j.error || 'The evaluation failed. See the log above.');
+        resetRun();
+      }
+    } catch (err) {
+      clearInterval(timer); timer = null;
+      showError(err.message);
+      resetRun();
+    }
+  }
+
+  function showResults(j) {
+    resultCard.classList.remove('hidden');
+    const rank = document.getElementById('ranking');
+    if (j.ranking && j.ranking.length) {
+      let html = '<table><thead><tr><th>#</th><th>Participant</th><th>Score / 100</th></tr></thead><tbody>';
+      j.ranking.forEach((row, i) => {
+        html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(row.participant_id) +
+                '</td><td>' + row.score + '</td></tr>';
+      });
+      rank.innerHTML = html + '</tbody></table>';
+    } else { rank.innerHTML = ''; }
+
+    const dl = document.getElementById('downloads');
+    dl.innerHTML = '';
+    (j.files || []).forEach(name => {
+      const a = document.createElement('a');
+      a.href = '/api/download/' + jobId + '/' + encodeURIComponent(name);
+      a.textContent = 'Download ' + name;
+      if (name.endsWith('.pdf')) a.className = 'alt';
+      if (name.endsWith('.json')) a.className = 'plain';
+      dl.appendChild(a);
+    });
+    resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  document.getElementById('clear').addEventListener('click', async () => {
+    if (!jobId) return;
+    await fetch('/api/cleanup/' + jobId, { method: 'POST' });
+    resultCard.classList.add('hidden');
+    progressCard.classList.add('hidden');
+    jobId = null;
+  });
+
+  function resetRun() {
+    runBtn.disabled = false;
+    runBtn.textContent = 'Run evaluation';
+  }
+  function showError(msg) {
+    alertBox.textContent = msg;
+    alertBox.classList.remove('hidden');
+    alertBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  function hideError() { alertBox.classList.add('hidden'); }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+})();
+</script>
+</body>
+</html>

@@ -200,13 +200,23 @@ class MockLLMClient(BaseLLMClient):
         return json.dumps(payload, ensure_ascii=False)
 
     def _mock_comparison(self, user: str) -> str:
-        ids = re.findall(r'"participant_id"\s*:\s*"([^"]+)"', user)
-        # De-duplicate while preserving order.
-        seen, uniq = set(), []
-        for i in ids:
-            if i not in seen:
-                seen.add(i); uniq.append(i)
-        ids = uniq or ["participant"]
+        # Pull each participant together with its total score from the digest so
+        # the mock ranking is ordered strongest-first. Ranking by score keeps the
+        # offline demo self-consistent with the score table it renders.
+        pairs = re.findall(
+            r'"participant_id"\s*:\s*"([^"]+)".*?"total_score"\s*:\s*([0-9.]+)',
+            user, re.DOTALL,
+        )
+        seen, scored = set(), []
+        for pid, score in pairs:
+            if pid not in seen:
+                seen.add(pid)
+                scored.append((pid, float(score)))
+        ids = [pid for pid, _ in sorted(scored, key=lambda x: x[1], reverse=True)]
+        if not ids:  # digest missing scores; fall back to first-seen order
+            ids = list(dict.fromkeys(
+                re.findall(r'"participant_id"\s*:\s*"([^"]+)"', user)
+            )) or ["participant"]
         payload = {
             "ranking": ids,
             "rationale": "[نمونه] رتبه‌بندی بر پایه قدرت روش‌شناسی و اثرگذاری کلی.",
