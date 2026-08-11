@@ -24,6 +24,8 @@ from .models import (
     CriterionScore,
     SubmissionEvaluation,
     InnovationProfile,
+    IdeaImprovement,
+    ComparisonResult,
     EvaluationResult,
 )
 from .config import RUBRIC, RubricCriterion
@@ -35,6 +37,8 @@ __all__ = [
     "CriterionScore",
     "SubmissionEvaluation",
     "InnovationProfile",
+    "IdeaImprovement",
+    "ComparisonResult",
     "EvaluationResult",
     "RUBRIC",
     "RubricCriterion",

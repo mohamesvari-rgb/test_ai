@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 from scientific_evaluator import ScientificEvaluationAgent
+from scientific_evaluator.config import SETTINGS
 from scientific_evaluator.llm_client import AnthropicLLMClient, MockLLMClient
 
 
@@ -43,10 +44,14 @@ def main(argv=None) -> int:
                         help="Path to challenge JSON file.")
     parser.add_argument("--submissions", required=True,
                         help="Folder containing participant .docx files.")
-    parser.add_argument("--out", default="output/report.docx",
-                        help="Output report path.")
-    parser.add_argument("--format", default=None, choices=["docx", "md"],
-                        help="Report format (inferred from --out if omitted).")
+    parser.add_argument("--out", default="output/report",
+                        help="Output report path (extension is set by --format).")
+    parser.add_argument("--format", default="both",
+                        choices=["docx", "pdf", "both", "md"],
+                        help="Report format(s). Default: both (Word + PDF).")
+    parser.add_argument("--lang", default=None,
+                        help="Report language, e.g. 'Persian' or 'English' "
+                             "(defaults to config.SETTINGS.report_language).")
     parser.add_argument("--model", default=None,
                         help="LLM model id (defaults to config.SETTINGS.model).")
     parser.add_argument("--mock", action="store_true",
@@ -55,7 +60,9 @@ def main(argv=None) -> int:
                         help="Optional path to also dump the raw result as JSON.")
     args = parser.parse_args(argv)
 
-    fmt = args.format or ("md" if str(args.out).lower().endswith(".md") else "docx")
+    if args.lang:
+        SETTINGS.report_language = args.lang
+    fmt = args.format
 
     try:
         llm = _build_llm(args)
@@ -71,8 +78,10 @@ def main(argv=None) -> int:
     print(f"Evaluating submissions in '{args.submissions}' ...", file=sys.stderr)
     result = agent.run(args.submissions)
 
-    out = agent.export_report(result, args.out, fmt=fmt)
-    print(f"\nReport written to: {out}")
+    written = agent.export_report(result, args.out, fmt=fmt)
+    print("\nReport(s) written:")
+    for p in written:
+        print(f"  - {p}")
 
     # Console summary of the ranking.
     print("\nRanking:")

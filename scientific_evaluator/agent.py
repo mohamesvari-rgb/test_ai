@@ -25,12 +25,17 @@ from typing import Callable, List, Optional, Union
 
 from .challenge import load_challenge
 from .comparison import ComparisonEngine
+from .config import SETTINGS
 from .document_reader import discover_submission_files, read_docx
 from .evaluation_engine import EvaluationEngine
+from .improvement import ImprovementEngine
 from .innovation_extractor import InnovationExtractor
 from .llm_client import BaseLLMClient
 from .models import Challenge, EvaluationResult, Submission, SubmissionEvaluation
+from .persian_report import render_blocks_to_docx
+from .pdf_report import render_blocks_to_pdf
 from .preprocessing import build_submission
+from .report_builder import build_report_blocks
 from .report_generator import MarkdownReportGenerator, WordReportGenerator
 from .synthesis import SynthesisEngine
 
@@ -55,6 +60,7 @@ class ScientificEvaluationAgent:
         # Engines
         self.evaluator = EvaluationEngine(llm)
         self.innovation = InnovationExtractor(llm)
+        self.improver = ImprovementEngine(llm)
         self.comparator = ComparisonEngine(llm)
         self.synthesizer = SynthesisEngine(llm)
 
@@ -79,10 +85,15 @@ class ScientificEvaluationAgent:
 
     # -- core pipeline ------------------------------------------------------
     def evaluate_submission(self, submission: Submission) -> SubmissionEvaluation:
-        """Score one submission and attach its innovation profile."""
+        """Score a submission, extract its innovation profile, and propose
+        improvement solutions for each of its key ideas."""
         self._progress(f"Evaluating {submission.participant_id}")
         evaluation = self.evaluator.evaluate(self.challenge, submission)
         evaluation.innovation = self.innovation.extract(self.challenge, submission)
+        self._progress(f"Proposing improvements for {submission.participant_id}")
+        evaluation.idea_improvements = self.improver.improve(
+            self.challenge, submission, evaluation
+        )
         return evaluation
 
     def run(
@@ -122,12 +133,63 @@ class ScientificEvaluationAgent:
         self,
         result: EvaluationResult,
         out_path: Union[str, Path],
-        fmt: str = "docx",
-    ) -> Path:
-        """Export the evaluation result as a Word (.docx) or Markdown (.md) file."""
+        fmt: str = "both",
+    ) -> List[Path]:
+        """Export the evaluation report.
+
+        Formats:
+          * ``docx`` - Word document (Persian RTL when report_language is Persian).
+          * ``pdf``  - PDF (rendered from the Word document via LibreOffice).
+          * ``both`` - both .docx and .pdf (default).
+          * ``md``   - Markdown (English layout; quick review/diffing).
+
+        Returns the list of files written.
+        """
+        import tempfile
+
+        from . import charts as charts_mod
+
         fmt = fmt.lower()
-        if fmt in ("docx", "word"):
-            return WordReportGenerator().generate(result, out_path)
+        out_path = Path(out_path)
+        persian = SETTINGS.report_language.lower().startswith("persian")
+
         if fmt in ("md", "markdown"):
-            return MarkdownReportGenerator().generate(result, out_path)
-        raise ValueError(f"Unsupported report format: {fmt!r} (use 'docx' or 'md')")
+            return [MarkdownReportGenerator().generate(result, out_path)]
+
+        if fmt not in ("docx", "word", "pdf", "both"):
+            raise ValueError(
+                f"Unsupported report format: {fmt!r} (use 'docx', 'pdf', 'both', 'md')"
+            )
+
+        # English mode keeps the original Word/Markdown generators.
+        if not persian:
+            docx_path = out_path.with_suffix(".docx")
+            WordReportGenerator().generate(result, docx_path)
+            if fmt in ("docx", "word"):
+                return [docx_path]
+            raise ValueError(
+                "PDF output is currently supported only for the Persian report. "
+                "Use fmt='docx' or fmt='md' in English mode."
+            )
+
+        # Persian mode: build charts + blocks ONCE, render docx and/or pdf from
+        # the same blocks so the two outputs are identical.
+        written: List[Path] = []
+        with tempfile.TemporaryDirectory() as chart_dir:
+            chart_paths = (
+                charts_mod.generate_charts(result, chart_dir)
+                if charts_mod.charts_available() else []
+            )
+            blocks = build_report_blocks(result, chart_paths)
+
+            if fmt in ("docx", "word", "both"):
+                self._progress("Rendering Persian Word report (.docx)")
+                written.append(
+                    render_blocks_to_docx(blocks, out_path.with_suffix(".docx"))
+                )
+            if fmt in ("pdf", "both"):
+                self._progress("Rendering Persian PDF report (.pdf)")
+                written.append(
+                    render_blocks_to_pdf(blocks, out_path.with_suffix(".pdf"))
+                )
+        return written

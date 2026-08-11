@@ -16,8 +16,25 @@ from __future__ import annotations
 import json
 from typing import List, Tuple
 
-from .config import RUBRIC
+from .config import RUBRIC, SETTINGS
 from .models import Challenge, Submission, SubmissionEvaluation
+
+
+def _language_directive() -> str:
+    """Instruction that pins the language of all human-readable output.
+
+    JSON *keys* must stay exactly as specified (English) so parsing works;
+    only the human-readable *values* are written in the target language.
+    """
+    lang = SETTINGS.report_language
+    if lang.lower().startswith("english"):
+        return "Write all text in clear English."
+    return (
+        f"Write ALL human-readable text (justifications, summaries, list items, "
+        f"prose) in {lang}. Keep every JSON key EXACTLY as given in English so "
+        f"the response can be parsed; only the values are in {lang}. Use correct, "
+        f"fluent, academic {lang}."
+    )
 
 
 REVIEWER_PERSONA = (
@@ -74,7 +91,8 @@ def build_scoring_prompt(challenge: Challenge, submission: Submission) -> Tuple[
         "competent-but-ordinary work sits at 5-7.\n"
         "4. Distinguish novelty (innovation) from mere correctness.\n"
         "5. Respond with ONLY a JSON object matching the schema. No prose "
-        "outside the JSON."
+        "outside the JSON.\n\n"
+        f"LANGUAGE: {_language_directive()}"
     )
 
     user = (
@@ -110,7 +128,8 @@ def build_innovation_prompt(challenge: Challenge, submission: Submission) -> Tup
         "TASK: Extract the INNOVATION and CREATIVITY profile of one submission. "
         "Separate genuine novelty from standard practice. Be specific and "
         "concrete - name the actual idea, not a generic label. Respond with "
-        "ONLY a JSON object matching the schema."
+        "ONLY a JSON object matching the schema.\n\n"
+        f"LANGUAGE: {_language_directive()}"
     )
     user = (
         "=== CHALLENGE ===\n"
@@ -146,6 +165,12 @@ def build_comparison_prompt(
     schema = {
         "ranking": ["<participant_id, best first>"],
         "rationale": "<why this order; reference criteria and evidence>",
+        "salient_points": {
+            "<participant_id>": ["<the most important, standout points of THIS answer>"]
+        },
+        "distinctive_points": {
+            "<participant_id>": ["<what sets THIS answer apart from the others>"]
+        },
         "pairwise_notes": ["<why X beats Y for specific reasons>"],
         "overlapping_ideas": ["<ideas shared across multiple submissions>"],
         "unique_ideas": {"<participant_id>": ["<ideas only this one has>"]},
@@ -153,10 +178,16 @@ def build_comparison_prompt(
     }
     system = (
         f"{REVIEWER_PERSONA}\n\n"
-        "TASK: COMPARE and RANK all submissions for the same challenge. "
-        "Explain WHY stronger answers beat weaker ones, grounded in the "
-        "criteria. Identify overlapping, unique and complementary ideas across "
-        "answers. Respond with ONLY a JSON object matching the schema."
+        "TASK: COMPARE and RANK all submissions for the same challenge.\n"
+        "For EACH answer, examine and list:\n"
+        "  * its SALIENT points - the strongest, most important points that "
+        "stand out in that answer;\n"
+        "  * its DISTINCTIVE points - what makes it different from the other "
+        "answers (its differentiators).\n"
+        "Then explain WHY stronger answers beat weaker ones, grounded in the "
+        "criteria, and identify overlapping, unique and complementary ideas "
+        "across answers. Respond with ONLY a JSON object matching the schema.\n\n"
+        f"LANGUAGE: {_language_directive()}"
     )
     user = (
         "=== CHALLENGE ===\n"
@@ -175,38 +206,107 @@ def build_comparison_prompt(
 def build_synthesis_prompt(
     challenge: Challenge, evaluations: List[SubmissionEvaluation], comparison
 ) -> Tuple[str, str]:
-    """Prompt that synthesizes a superior combined solution."""
+    """Prompt that integrates EXISTING ideas + their improvements into ONE
+    comprehensive final solution.
+
+    Grounding rule: the solution must be built by combining and improving ideas
+    that ACTUALLY APPEAR in the submitted answers - it must not invent an
+    unrelated new answer from scratch.
+    """
     ingredients = []
     for e in evaluations:
         ingredients.append({
             "participant_id": e.participant_id,
-            "best_ideas": (
+            "existing_ideas": (
                 e.innovation.main_innovations
                 + e.innovation.strong_technical_ideas
                 + e.innovation.unique_advantages
             ),
+            "idea_improvements": [
+                {"idea": imp.idea, "improvements": imp.improvements,
+                 "expected_effect": imp.expected_effect}
+                for imp in e.idea_improvements
+            ],
         })
 
     system = (
         f"{REVIEWER_PERSONA}\n\n"
-        "TASK: Design a SINGLE improved solution to the challenge that "
-        "combines the strongest, most feasible and most novel ideas across "
-        "all submissions, while fixing their common weaknesses. Be concrete "
-        "and technical. Structure your answer with clear headings: "
-        "Approach, Methodology, Why it is superior, Feasibility & resources, "
-        "Risks & mitigations, Expected impact. Write in clear scientific prose "
-        "(not JSON)."
+        "TASK: Produce ONE final, comprehensive solution to the challenge by "
+        "INTEGRATING the ideas that already exist in the submitted answers "
+        "TOGETHER WITH the improvement solutions proposed for each idea.\n"
+        "Hard rules:\n"
+        "1. Build ONLY from ideas that actually appear in the submissions "
+        "(plus the listed improvements). Do NOT invent an unrelated new answer.\n"
+        "2. Explicitly COMBINE ideas from different answers so they reinforce "
+        "each other into a single coherent solution.\n"
+        "3. Fold in the improvement solutions so each borrowed idea is used in "
+        "its strengthened form.\n"
+        "4. The result must be a credible, acceptable solution to THIS challenge.\n"
+        "Structure with clear headings: Overview; Which idea comes from which "
+        "answer (attribution); Integrated methodology; How the improvements are "
+        "applied; Why this combination solves the challenge; Feasibility & "
+        "resources; Risks & mitigations; Expected impact. Write in fluent "
+        "scientific prose (NOT JSON).\n\n"
+        f"LANGUAGE: {_language_directive()}"
     )
     user = (
         "=== CHALLENGE ===\n"
         f"{challenge.to_prompt_block()}\n\n"
-        "=== BEST IDEAS PER SUBMISSION ===\n"
-        f"{json.dumps(ingredients, indent=2)}\n\n"
+        "=== EXISTING IDEAS + THEIR IMPROVEMENT SOLUTIONS (per submission) ===\n"
+        f"{json.dumps(ingredients, indent=2, ensure_ascii=False)}\n\n"
         "=== RANKING RATIONALE ===\n"
         f"{comparison.rationale}\n\n"
         "=== COMPLEMENTARY IDEAS TO FUSE ===\n"
-        f"{json.dumps(comparison.complementary_ideas, indent=2)}\n\n"
-        "Now write the synthesized improved solution."
+        f"{json.dumps(comparison.complementary_ideas, indent=2, ensure_ascii=False)}\n\n"
+        "Now write the single integrated, comprehensive solution, combining and "
+        "improving the existing ideas above."
+    )
+    return system, user
+
+
+# ---------------------------------------------------------------------------
+# 4b) Per-idea improvement solutions
+# ---------------------------------------------------------------------------
+def build_improvement_prompt(
+    challenge: Challenge, submission: Submission, ideas: List[str]
+) -> Tuple[str, str]:
+    """Prompt that proposes concrete improvement solutions for each key idea.
+
+    For every idea drawn from the submission, the model returns solutions that
+    make the idea MORE EFFECTIVE at solving the challenge.
+    """
+    schema = {
+        "idea_improvements": [
+            {
+                "idea": "<the idea, restated concisely>",
+                "why_it_matters": "<its relevance to the challenge>",
+                "improvements": [
+                    "<a concrete, actionable solution that strengthens this idea>",
+                    "<another improvement>",
+                ],
+                "expected_effect": "<how these improvements help solve the challenge>",
+            }
+        ]
+    }
+    system = (
+        f"{REVIEWER_PERSONA}\n\n"
+        "TASK: For EACH given idea taken from this submission, propose a set of "
+        "concrete IMPROVEMENT SOLUTIONS. Each solution must be actionable and "
+        "must move the idea CLOSER to solving the stated challenge (e.g. improve "
+        "its accuracy, feasibility, novelty, robustness, cost, or impact). Do "
+        "not merely restate the idea - improve it. Respond with ONLY a JSON "
+        "object matching the schema.\n\n"
+        f"LANGUAGE: {_language_directive()}"
+    )
+    user = (
+        "=== CHALLENGE ===\n"
+        f"{challenge.to_prompt_block()}\n\n"
+        f"=== SUBMISSION (participant_id: {submission.participant_id}) ===\n"
+        f"{submission.raw_text}\n\n"
+        "=== IDEAS TO IMPROVE (one entry per idea) ===\n"
+        f"{json.dumps(ideas, indent=2, ensure_ascii=False)}\n\n"
+        "Return JSON with EXACTLY this schema:\n"
+        f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
     )
     return system, user
 
@@ -226,7 +326,8 @@ def build_recommendation_prompt(
         f"{REVIEWER_PERSONA}\n\n"
         "TASK: Write a concise FINAL RECOMMENDATION for the challenge owner: "
         "who should win and why, which ideas to pursue, and what to improve "
-        "before implementation. 1-3 short paragraphs, decisive and evidence-based."
+        "before implementation. 1-3 short paragraphs, decisive and evidence-based.\n\n"
+        f"LANGUAGE: {_language_directive()}"
     )
     user = (
         "=== CHALLENGE ===\n"

@@ -1,0 +1,258 @@
+"""
+Report content builder (single source of truth).
+
+Builds the report as an ordered list of typed, renderer-agnostic *blocks*
+(headings, paragraphs, bullet lists, tables, images). The Word renderer and the
+PDF renderer both consume the SAME blocks, so the two outputs never diverge.
+
+All human-readable text here is in Persian, per the report requirements.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional
+
+from .config import RUBRIC
+from .models import EvaluationResult
+
+# Persian digit conversion for a fully-localized look.
+_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def fa(value) -> str:
+    """Render a number/string with Persian digits."""
+    return str(value).translate(_FA_DIGITS)
+
+
+# Lookups: criterion key -> Persian label (fall back to English if unset).
+_NAME_FA = {c.key: (c.name_fa or c.name) for c in RUBRIC}
+_SHORT_FA = {c.key: (c.short_fa or c.name.split()[0]) for c in RUBRIC}
+
+
+# ---------------------------------------------------------------------------
+# Block types
+# ---------------------------------------------------------------------------
+@dataclass
+class Block:
+    """Base class for a renderable report element."""
+
+
+@dataclass
+class Title(Block):
+    text: str
+    subtitles: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Heading(Block):
+    text: str
+    level: int = 1
+
+
+@dataclass
+class Para(Block):
+    text: str
+    bold: bool = False
+
+
+@dataclass
+class Bullets(Block):
+    items: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Table(Block):
+    headers: List[str]
+    rows: List[List[str]]
+    # Optional relative column widths (must sum ~1.0); None = equal columns.
+    widths: Optional[List[float]] = None
+
+
+@dataclass
+class Image(Block):
+    path: str
+    caption: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Builder
+# ---------------------------------------------------------------------------
+def _bul(items) -> List[str]:
+    return [str(x).strip() for x in items if str(x).strip()]
+
+
+def build_report_blocks(
+    result: EvaluationResult, chart_paths: Optional[List[Path]] = None
+) -> List[Block]:
+    """Assemble the full report as an ordered list of blocks (in Persian)."""
+    chart_paths = chart_paths or []
+    ch = result.challenge
+    ranked = result.ranked_evaluations()
+    blocks: List[Block] = []
+
+    # Cover
+    blocks.append(Title(
+        text="گزارش ارزیابی علمی",
+        subtitles=[f"چالش: {ch.title}", f"حوزه: {ch.field}"],
+    ))
+
+    # 1) Challenge summary
+    blocks.append(Heading("۱. خلاصه چالش", 1))
+    blocks.append(Para(ch.background))
+    blocks.append(Heading("اهداف", 2))
+    blocks.append(Bullets(_bul(ch.objectives)))
+    if ch.constraints:
+        blocks.append(Heading("محدودیت‌ها", 2))
+        blocks.append(Bullets(_bul(ch.constraints)))
+    if ch.expected_outputs:
+        blocks.append(Heading("خروجی‌های مورد انتظار", 2))
+        blocks.append(Bullets(_bul(ch.expected_outputs)))
+
+    # 2) Rubric
+    blocks.append(Heading("۲. معیارها و سامانه امتیازدهی", 1))
+    blocks.append(Para(
+        "هر معیار توسط موتور ارزیابی از ۰ تا ۱۰ امتیاز می‌گیرد و سهم آن در امتیاز "
+        "نهایی برابر است با (امتیاز خام ÷ ۱۰) × وزن معیار. مجموع وزن‌ها ۱۰۰ است."))
+    rubric_rows = [
+        [c.name_fa or c.name, fa(c.max_points), c.description_fa or c.description]
+        for c in RUBRIC
+    ]
+    rubric_rows.append(["جمع کل", fa(100), "—"])
+    blocks.append(Table(["معیار", "وزن (امتیاز)", "آنچه می‌سنجد"], rubric_rows,
+                        widths=[0.26, 0.14, 0.60]))
+
+    # 3) Score table + charts
+    blocks.append(Heading("۳. جدول امتیازها و نمودارهای تحلیلی", 1))
+    keys = [c.key for c in RUBRIC]
+    headers = ["رتبه", "شرکت‌کننده"] + [_SHORT_FA[c.key] for c in RUBRIC] + ["امتیاز کل"]
+    score_rows = []
+    for rank, e in enumerate(ranked, start=1):
+        row = [fa(rank), e.participant_id]
+        for k in keys:
+            cs = e.score_by_key(k)
+            row.append(fa(f"{cs.raw_score:.0f}") if cs else "-")
+        row.append(fa(f"{e.total_score:.1f}"))
+        score_rows.append(row)
+    blocks.append(Table(headers, score_rows))
+    for p in chart_paths:
+        blocks.append(Image(str(p)))
+
+    # 4) Individual reviews
+    blocks.append(Heading("۴. بررسی انفرادی هر پاسخ", 1))
+    for e in ranked:
+        blocks.append(Heading(f"{e.participant_id} — {e.title}", 2))
+        blocks.append(Para(f"امتیاز نهایی: {fa(f'{e.total_score:.1f}')} از ۱۰۰", bold=True))
+        if e.summary:
+            blocks.append(Para(e.summary))
+        blocks.append(Para("توجیه امتیاز هر معیار:", bold=True))
+        blocks.append(Bullets([
+            f"{_NAME_FA.get(cs.key, cs.name)}: {fa(f'{cs.raw_score:.0f}')}/۱۰ — "
+            f"{cs.justification or '—'}"
+            for cs in e.criterion_scores
+        ]))
+        if e.strengths:
+            blocks.append(Para("نقاط قوت:", bold=True))
+            blocks.append(Bullets(_bul(e.strengths)))
+        if e.weaknesses:
+            blocks.append(Para("نقاط ضعف:", bold=True))
+            blocks.append(Bullets(_bul(e.weaknesses)))
+        if e.integrity_flags:
+            blocks.append(Para(
+                f"هشدارهای صحت (کسر امتیاز {fa(f'{e.penalty:.0f}')}): "
+                + "؛ ".join(e.integrity_flags), bold=True))
+
+    # 5) Innovation & creativity table
+    blocks.append(Heading("۵. جدول نوآوری و خلاقیت", 1))
+    inv_rows = []
+    for e in ranked:
+        inv = e.innovation
+        inv_rows.append([
+            e.participant_id,
+            "\n".join(f"• {x}" for x in inv.main_innovations) or "—",
+            "\n".join(f"• {x}" for x in (inv.creative_aspects + inv.unique_advantages)) or "—",
+            "\n".join(f"• {x}" for x in inv.weaknesses_or_missing_parts) or "—",
+        ])
+    blocks.append(Table(
+        ["شرکت‌کننده", "نوآوری‌های اصلی",
+         "جنبه‌های خلاقانه / مزیت‌های منحصربه‌فرد", "ضعف‌ها / کاستی‌ها"],
+        inv_rows, widths=[0.16, 0.28, 0.31, 0.25]))
+
+    # 6) Per-idea improvement solutions
+    blocks.append(Heading("۶. راه‌حل‌های بهبود هر ایده", 1))
+    blocks.append(Para(
+        "برای هر ایده کلیدی در هر پاسخ، مجموعه‌ای از راه‌حل‌ها ارائه شده است تا آن "
+        "ایده را در نزدیک‌شدن به حل چالش مؤثرتر کند."))
+    any_improvements = False
+    for e in ranked:
+        if not e.idea_improvements:
+            continue
+        any_improvements = True
+        blocks.append(Heading(f"{e.participant_id}", 2))
+        imp_rows = []
+        for imp in e.idea_improvements:
+            imp_rows.append([
+                imp.idea or "—",
+                "\n".join(f"• {x}" for x in imp.improvements) or "—",
+                imp.expected_effect or "—",
+            ])
+        blocks.append(Table(["ایده", "راه‌حل‌های بهبود", "اثر مورد انتظار"],
+                            imp_rows, widths=[0.30, 0.45, 0.25]))
+    if not any_improvements:
+        blocks.append(Para("—"))
+
+    # 7) Comparison: salient & distinctive points + ranking
+    comp = result.comparison
+    blocks.append(Heading("۷. مقایسه پاسخ‌ها: نقاط برجسته و متمایز", 1))
+    cmp_rows = []
+    for e in ranked:
+        pid = e.participant_id
+        cmp_rows.append([
+            pid,
+            "\n".join(f"• {x}" for x in comp.salient_points.get(pid, [])) or "—",
+            "\n".join(f"• {x}" for x in comp.distinctive_points.get(pid, [])) or "—",
+        ])
+    blocks.append(Table(["شرکت‌کننده", "نقاط برجسته", "نقاط متمایز"],
+                        cmp_rows, widths=[0.18, 0.41, 0.41]))
+
+    blocks.append(Heading("رتبه‌بندی نهایی", 2))
+    rank_lines = []
+    for rank, pid in enumerate(comp.ranking, start=1):
+        ev = next((e for e in result.evaluations if e.participant_id == pid), None)
+        score = fa(f"{ev.total_score:.1f}") if ev else "—"
+        rank_lines.append(f"{fa(rank)}. {pid} ({score} از ۱۰۰)")
+    blocks.append(Bullets(rank_lines))
+    if comp.rationale:
+        blocks.append(Heading("دلیل این ترتیب", 2))
+        blocks.append(Para(comp.rationale))
+    if comp.pairwise_notes:
+        blocks.append(Heading("یادداشت‌های مقایسه دوبه‌دو", 2))
+        blocks.append(Bullets(_bul(comp.pairwise_notes)))
+    if comp.overlapping_ideas:
+        blocks.append(Heading("ایده‌های مشترک", 2))
+        blocks.append(Bullets(_bul(comp.overlapping_ideas)))
+    if comp.complementary_ideas:
+        blocks.append(Heading("ایده‌های مکمل", 2))
+        blocks.append(Bullets(_bul(comp.complementary_ideas)))
+
+    # 8) Final recommendation
+    blocks.append(Heading("۸. توصیه نهایی", 1))
+    blocks.append(Para(result.final_recommendation or "—"))
+
+    # 9) Integrated comprehensive solution
+    blocks.append(Heading("۹. راه‌حل جامع و نهایی (تلفیق و بهبود ایده‌ها)", 1))
+    blocks.append(Para(
+        "راه‌حل زیر از ترکیب ایده‌های موجود در پاسخ‌ها به همراه راه‌حل‌های بهبود "
+        "آن‌ها ساخته شده است تا یک راه‌حل جامع و قابل‌قبول برای چالش به دست آید.",
+        bold=True))
+    for line in (result.synthesized_solution or "—").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            blocks.append(Heading(line.lstrip("# ").strip(), 2))
+        else:
+            blocks.append(Para(line))
+
+    return blocks

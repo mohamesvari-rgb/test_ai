@@ -32,6 +32,9 @@ class RubricCriterion:
     max_points: float          # weight: maximum points this criterion can add to /100
     description: str           # what "good" looks like for this dimension
     guidance: str              # scoring guidance handed to the LLM
+    name_fa: str = ""          # Persian criterion name (for the Persian report)
+    short_fa: str = ""         # short Persian label (for narrow table columns)
+    description_fa: str = ""   # Persian description (for the Persian rubric table)
 
 
 # The full rubric. max_points sum to 100 (validated below).
@@ -48,6 +51,10 @@ RUBRIC: List[RubricCriterion] = [
             "ignores stated constraints. 0 = off-topic or answers a different "
             "problem."
         ),
+        name_fa="ارتباط با چالش",
+        short_fa="ارتباط",
+        description_fa="میزان پرداختن مستقیم و کامل به اهداف، محدودیت‌ها و "
+        "خروجی‌های مورد انتظارِ چالش.",
     ),
     RubricCriterion(
         key="scientific_accuracy",
@@ -60,6 +67,10 @@ RUBRIC: List[RubricCriterion] = [
             "no factual errors. 5 = broadly plausible but with notable errors or "
             "unsupported assertions. 0 = fundamentally incorrect science."
         ),
+        name_fa="دقت علمی",
+        short_fa="دقت",
+        description_fa="درستی علم: حقایق، معادلات، استدلال فیزیکی، استنادها و "
+        "نبودِ ادعاهای بی‌پایه یا نادرست.",
     ),
     RubricCriterion(
         key="methodology",
@@ -72,6 +83,10 @@ RUBRIC: List[RubricCriterion] = [
             "5 = a reasonable method with gaps in validation or reproducibility. "
             "0 = no coherent methodology or an approach that cannot work."
         ),
+        name_fa="استحکام روش‌شناسی",
+        short_fa="روش",
+        description_fa="دقت روش پیشنهادی: طراحی آزمایشی/تحلیلی، کنترل‌ها، راهبرد "
+        "داده، اعتبارسنجی و تکرارپذیری.",
     ),
     RubricCriterion(
         key="innovation",
@@ -84,6 +99,10 @@ RUBRIC: List[RubricCriterion] = [
             "5 = a sensible combination of known methods with some new twist. "
             "0 = a textbook or well-known solution with nothing new."
         ),
+        name_fa="نوآوری و اصالت",
+        short_fa="نوآوری",
+        description_fa="نو بودن ایده نسبت به رویکردهای متعارف حوزه و میزان "
+        "پیشرفت واقعی نسبت به وضعیت موجود دانش.",
     ),
     RubricCriterion(
         key="creativity",
@@ -95,6 +114,10 @@ RUBRIC: List[RubricCriterion] = [
             "10 = an elegant, non-obvious framing that reframes the problem. "
             "5 = competent but conventional thinking. 0 = mechanical / templated."
         ),
+        name_fa="خلاقیت ایده",
+        short_fa="خلاقیت",
+        description_fa="تخیل، ظرافت و بدیهی‌نبودنِ چارچوب‌بندی مسئله و پیوند "
+        "میان مفاهیم.",
     ),
     RubricCriterion(
         key="feasibility",
@@ -107,6 +130,10 @@ RUBRIC: List[RubricCriterion] = [
             "5 = feasible in principle but with significant unaddressed hurdles. "
             "0 = impractical or ignores hard real-world constraints."
         ),
+        name_fa="امکان‌سنجی عملی",
+        short_fa="امکان",
+        description_fa="واقع‌گراییِ اجرا با توجه به هزینه، زمان، داده، سخت‌افزار "
+        "و محدودیت‌های مقرراتی و عملیاتی.",
     ),
     RubricCriterion(
         key="technical_depth",
@@ -118,6 +145,10 @@ RUBRIC: List[RubricCriterion] = [
             "10 = deep, specific technical detail with quantified trade-offs. "
             "5 = moderate detail, some hand-waving. 0 = superficial / buzzwords."
         ),
+        name_fa="عمق فنی",
+        short_fa="عمق",
+        description_fa="عمق جزئیات فنی: سازوکارها، پارامترها و مصالحه‌های کمی "
+        "به‌جای کلی‌گویی و واژه‌های پرطمطراق.",
     ),
     RubricCriterion(
         key="clarity",
@@ -129,6 +160,9 @@ RUBRIC: List[RubricCriterion] = [
             "10 = exceptionally clear, well-structured and easy to follow. "
             "5 = understandable but disorganized in places. 0 = confusing."
         ),
+        name_fa="شفافیت و ساختار",
+        short_fa="شفافیت",
+        description_fa="خوانایی، سازمان‌دهی منطقی و کیفیت ارائه نوشتاری پاسخ.",
     ),
     RubricCriterion(
         key="impact",
@@ -140,6 +174,10 @@ RUBRIC: List[RubricCriterion] = [
             "10 = transformative, wide-reaching impact. 5 = useful but "
             "incremental impact. 0 = negligible impact even if successful."
         ),
+        name_fa="اثرگذاری بالقوه",
+        short_fa="اثر",
+        description_fa="بزرگی و اهمیت نتیجه در صورت موفقیت: ارزش علمی، اجتماعی، "
+        "اقتصادی یا زیست‌محیطی.",
     ),
     RubricCriterion(
         key="risk_awareness",
@@ -152,6 +190,10 @@ RUBRIC: List[RubricCriterion] = [
             "5 = mentions some limitations superficially. 0 = ignores all risks "
             "or overclaims certainty."
         ),
+        name_fa="آگاهی از محدودیت‌ها و ریسک",
+        short_fa="ریسک",
+        description_fa="شناساییِ صادقانهٔ محدودیت‌ها، ریسک‌ها و حالت‌های شکست و "
+        "ارائهٔ راهکار کاهش آن‌ها.",
     ),
 ]
 
@@ -174,6 +216,15 @@ class Settings:
     max_retries: int = 3
     # If True, raise when scores drift outside 0-10 instead of clamping.
     strict_scores: bool = False
+
+    # ----- Report language & fonts -----------------------------------------
+    # Language the LLM writes its analysis in and the report is rendered in.
+    report_language: str = "Persian"      # e.g. "Persian" or "English"
+    # Fonts requested for the Persian (Word/PDF) report.
+    persian_font: str = "B Nazanin"       # font for Persian (RTL) text
+    latin_font: str = "Times New Roman"   # font for Latin text / numbers
+    base_font_size: int = 12
+    heading_font_size: int = 15
 
 
 SETTINGS = Settings()

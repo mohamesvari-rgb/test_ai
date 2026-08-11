@@ -5,33 +5,51 @@ participants in response to a defined challenge — in any research domain
 (engineering, medicine, environmental science, remote sensing, AI, agriculture,
 energy, …).
 
-It reads each participant's **Word (`.docx`)** answer, scores it against a
-transparent, weighted rubric using an LLM acting as a rigorous scientific peer
-reviewer, extracts each answer's innovations and creativity, compares and ranks
-all answers, and produces a single **integrated Word report** — including a
-**synthesized "best-of-all" solution** that fuses the strongest ideas.
+It reads each participant's **existing Word (`.docx`)** answer, scores it against
+a transparent, weighted rubric using an LLM acting as a rigorous scientific peer
+reviewer, extracts each answer's innovations and creativity, **proposes concrete
+improvement solutions for each idea**, **compares the answers by their salient
+and distinctive points**, ranks them, and **integrates all ideas together with
+their improvements into one comprehensive final solution**.
+
+The final report is produced in **Persian (RTL)**, with **analytical tables and
+charts**, using **B Nazanin** for Persian and **Times New Roman** for English,
+and is exported as **both Word (`.docx`) and PDF**.
+
+---
+
+## Table of contents
+
+1. [What it does (requirements → features)](#1-what-it-does)
+2. [System workflow](#2-system-workflow)
+3. [Agent architecture](#3-agent-architecture)
+4. [Evaluation rubric](#4-evaluation-rubric-100-points)
+5. [Quick start](#5-quick-start)
+6. [Step-by-step implementation plan](#6-step-by-step-implementation-plan)
+7. [Python libraries & system dependencies](#7-python-libraries--system-dependencies)
+8. [Code structure](#8-code-structure)
+9. [Example prompts](#9-example-prompts)
+10. [Report format & fonts](#10-report-format--fonts)
+11. [Notes & limitations](#11-notes--limitations)
+
+---
+
+## 1. What it does
+
+| # | Requirement | How it is met |
+|---|---|---|
+| 1 | **Use existing answers** (not invented) | Reads real participant `.docx` files; the final solution is **built by combining and improving ideas that actually appear in the submissions** (the synthesis prompt forbids inventing an unrelated new answer). |
+| 2 | **Compare salient & distinctive points** | The comparison engine extracts, per answer, its **salient points** (نقاط برجسته) and **distinctive points** (نقاط متمایز) and tabulates them. |
+| 3 | **Improvement solutions per idea** | For every key idea in every answer, the improvement engine proposes concrete **solutions that make the idea more effective at solving the challenge**, with an expected effect. |
+| 4 | **Integrated comprehensive solution** | The synthesis engine fuses **all ideas + their improvement solutions** into a single coherent solution, with attribution of which idea came from which answer. |
+| 5 | **Persian report, tables + charts, B Nazanin / Times New Roman, PDF + Word** | Right-to-left Persian report with analytical tables and matplotlib charts; Persian text in B Nazanin, Latin in Times New Roman; exported as **both `.docx` and `.pdf`**. |
 
 It is built to judge **quality, novelty, creativity, feasibility and research
 value** — not just to compare text.
 
 ---
 
-## Table of contents
-
-1. [System workflow](#1-system-workflow)
-2. [Agent architecture](#2-agent-architecture)
-3. [Evaluation rubric](#3-evaluation-rubric-100-points)
-4. [Quick start](#4-quick-start)
-5. [Step-by-step implementation plan](#5-step-by-step-implementation-plan)
-6. [Python libraries required](#6-python-libraries-required)
-7. [Code structure & pseudocode](#7-code-structure--pseudocode)
-8. [Example prompts used inside the agent](#8-example-prompts-used-inside-the-agent)
-9. [Example report format](#9-example-report-format)
-10. [Extending the agent](#10-extending-the-agent)
-
----
-
-## 1. System workflow
+## 2. System workflow
 
 ```
         ┌─────────────────────┐
@@ -39,142 +57,142 @@ value** — not just to compare text.
         │  challenge.py       │  constraints, expected outputs, notes
         └──────────┬──────────┘
                    │
-   participant     ▼
-   .docx files  ┌─────────────────────┐   ┌──────────────────────┐
-   ───────────▶ │ Word Document Reader │──▶│ Text Preprocessing   │
+  EXISTING         ▼
+  participant   ┌─────────────────────┐   ┌──────────────────────┐
+  .docx files ─▶│ Word Document Reader │──▶│ Text Preprocessing   │
                 │ document_reader.py   │   │ preprocessing.py     │
                 └─────────────────────┘   └──────────┬───────────┘
                                                      │ Submission objects
-                                                     ▼
-      ┌───────────────────────── per submission ──────────────────────┐
-      │  ┌──────────────────┐        ┌───────────────────────────┐    │
-      │  │ Evaluation Engine │        │ Innovation Extractor      │    │
-      │  │ evaluation_engine │        │ innovation_extractor.py   │    │
-      │  │  → 0-10 / criterion│       │  → innovations, creativity,│   │
-      │  └────────┬──────────┘        │    unique advantages, gaps │   │
-      │           ▼                    └─────────────┬─────────────┘   │
-      │  ┌──────────────────┐                        │                 │
-      │  │ Scoring Engine    │  weighted /100         │                 │
-      │  │ scoring_engine.py │◀───────────────────────┘                 │
-      │  └────────┬──────────┘                                          │
-      └───────────┼───────────────────────────────────────────────────┘
-                  ▼  SubmissionEvaluation (score + innovation profile)
-        ┌────────────────────────┐
-        │ Comparison & Ranking    │  rank best→weakest, why, overlapping /
-        │ comparison.py           │  unique / complementary ideas
-        └───────────┬────────────┘
-                    ▼
-        ┌────────────────────────┐
-        │ Synthesis Engine        │  synthesized improved solution +
-        │ synthesis.py            │  final recommendation
-        └───────────┬────────────┘
-                    ▼
-        ┌────────────────────────┐
-        │ Report Generator        │  →  report.docx  (or report.md)
-        │ report_generator.py     │
-        └────────────────────────┘
+      ┌──────────────────── per submission ─────────▼──────────────────┐
+      │  Evaluation Engine → 0-10 / criterion  → Scoring Engine (/100)  │
+      │  Innovation Extractor → innovations / creativity / gaps         │
+      │  Improvement Engine  → improvement solutions for EACH idea (#3) │
+      └───────────────────────────────┬────────────────────────────────┘
+                                       ▼  SubmissionEvaluation
+        ┌────────────────────────────────────────────┐
+        │ Comparison & Ranking (comparison.py)        │
+        │  rank + salient points + distinctive points │  (#2)
+        │  + overlapping / unique / complementary     │
+        └───────────────────┬────────────────────────┘
+                            ▼
+        ┌────────────────────────────────────────────┐
+        │ Synthesis (synthesis.py)                    │
+        │  integrate ALL ideas + their improvements   │  (#1, #4)
+        │  → ONE comprehensive solution + recommendation
+        └───────────────────┬────────────────────────┘
+                            ▼   EvaluationResult
+        ┌────────────────────────────────────────────┐
+        │ report_builder.py  → shared report BLOCKS   │
+        │        (single source of truth, Persian)    │
+        └──────┬───────────────────────────┬──────────┘
+               ▼                            ▼
+   persian_report.py (Word)        pdf_report.py (PDF, weasyprint)
+        report.docx                       report.pdf
 ```
 
-**One-line summary:** *read → clean → score → extract novelty → rank → synthesize → export.*
+**One-line summary:** *read existing answers → clean → score → extract novelty →
+improve each idea → compare (salient/distinctive) → rank → integrate into one
+solution → render identical Persian Word + PDF.*
 
 ---
 
-## 2. Agent architecture
+## 3. Agent architecture
 
-The agent is **modular** — every stage is a single-purpose module behind a small
-interface, so any piece can be tested, tuned or swapped independently.
+Every stage is a single-purpose module behind a small interface, so any piece
+can be tested, tuned or swapped independently. The Word and PDF renderers both
+consume the **same report blocks** (`report_builder.py`), so the two outputs are
+always identical.
 
 | Module | File | Responsibility |
 |---|---|---|
-| Challenge input | `challenge.py` | Load/validate a challenge (any domain) from JSON or dict |
-| Word document reader | `document_reader.py` | Read `.docx` paragraphs **and tables** into raw text |
+| Challenge input | `challenge.py` | Load/validate a challenge (any domain) from JSON/dict |
+| Word document reader | `document_reader.py` | Read `.docx` paragraphs **and** tables into raw text |
 | Text preprocessing | `preprocessing.py` | Clean/normalize text, detect title, cap length → `Submission` |
-| LLM client | `llm_client.py` | Swappable LLM backend (`Anthropic` real / `Mock` offline) + robust JSON parsing |
-| Prompts | `prompts.py` | Auditable prompt templates for every LLM task |
+| LLM client | `llm_client.py` | Swappable backend (`Anthropic` real / `Mock` offline, Persian) + robust JSON parsing |
+| Prompts | `prompts.py` | Auditable prompt templates; language directive pins output to Persian |
 | Evaluation engine | `evaluation_engine.py` | Score one submission 0-10 per criterion with justifications |
-| Scoring engine | `scoring_engine.py` | Weighted-rubric math → final `/100`, clamping, integrity penalty |
+| Scoring engine | `scoring_engine.py` | Weighted-rubric math → `/100`, clamping, integrity penalty |
 | Innovation extractor | `innovation_extractor.py` | Extract innovations, creativity, unique advantages, gaps |
-| Comparison & ranking | `comparison.py` | Rank all answers, explain order, overlapping/unique/complementary ideas |
-| Synthesis | `synthesis.py` | Fuse best ideas into an improved solution + final recommendation |
-| Report generator | `report_generator.py` | Export the integrated report as Word/Markdown |
+| **Improvement engine** | `improvement.py` | **Propose improvement solutions for each idea** (#3) |
+| Comparison & ranking | `comparison.py` | Rank + **salient / distinctive points** + overlapping/unique/complementary (#2) |
+| Synthesis | `synthesis.py` | **Integrate all ideas + improvements → one comprehensive solution** (#1, #4) |
+| **Report builder** | `report_builder.py` | Build the report as renderer-agnostic **blocks** (single source of truth) |
+| Fonts | `fonts.py` | Locate real TTFs for the PDF (B Nazanin / Times New Roman, with fallbacks) |
+| Charts | `charts.py` | matplotlib bar + heatmap with correctly-shaped Persian labels |
+| **Persian Word renderer** | `persian_report.py` | Render blocks → RTL `.docx` (B Nazanin + Times New Roman, charts) |
+| **PDF renderer** | `pdf_report.py` | Render blocks → RTL PDF via weasyprint (fonts embedded) |
+| English report (optional) | `report_generator.py` | Original English Word/Markdown renderer |
 | Orchestrator | `agent.py` | Wire the pipeline together (`ScientificEvaluationAgent`) |
 | Data models | `models.py` | Typed dataclasses passed between modules |
-| Config | `config.py` | The rubric + runtime settings (single source of truth) |
+| Config | `config.py` | Rubric (weights + Persian names) + settings (language, fonts) |
 
-**Design choices that make it "scientific", not generic text comparison:**
-
-- The LLM is framed as a **skeptical senior peer reviewer** and told to score
-  strictly from evidence in the text, to reserve top scores for genuine
-  excellence, and to distinguish **novelty from mere correctness**.
-- **Innovation is analyzed in its own pass**, so creativity/novelty is explicit
-  rather than an implicit by-product of a single score.
-- The rubric weights the **scientific** dimensions (accuracy, methodology,
-  feasibility, impact) most heavily.
-- **Integrity flags** (overclaiming, contradictions, fabricated results,
-  off-topic) apply a bounded score penalty.
-- The numeric ranking is **reconciled** with the LLM's qualitative ranking so
-  the final order never silently contradicts the rubric.
+**What makes it "scientific", not generic text comparison:** a skeptical
+peer-reviewer persona; evidence-anchored scoring with calibrated anchors;
+novelty analyzed in its own pass; heavily-weighted scientific criteria;
+integrity flags with a bounded penalty; and a numeric ranking reconciled with
+the LLM's qualitative ranking.
 
 ---
 
-## 3. Evaluation rubric (100 points)
+## 4. Evaluation rubric (100 points)
 
-Each criterion is scored **0–10** by the evaluation engine and contributes
-`(raw_score / 10) × max_points` to the final score out of 100. Weights are
-defined in one place (`config.RUBRIC`) and validated to sum to 100.
+Each criterion is scored **0–10** and contributes `(raw_score / 10) × weight`.
+Weights live in `config.RUBRIC` (validated to sum to 100) and carry Persian
+names used in the report.
 
-| # | Criterion | Weight | What it measures |
-|---|---|---:|---|
-| 1 | Relevance to the challenge | 12 | Directly addresses objectives, constraints, expected outputs |
-| 2 | Scientific accuracy | 14 | Correct facts/equations/reasoning; claims supported/cited |
-| 3 | Methodological soundness | 13 | Rigorous, reproducible design with validation & controls |
-| 4 | Innovation & originality | 12 | Genuine novelty vs. the state of the art |
-| 5 | Creativity of the idea | 8 | Elegant, non-obvious framing and connections |
-| 6 | Practical feasibility | 11 | Realistic given cost/time/data/hardware/regulation |
-| 7 | Technical depth | 10 | Concrete mechanisms, parameters, quantified trade-offs |
-| 8 | Clarity & structure | 7 | Readable, logically organized communication |
-| 9 | Potential impact | 8 | Significance/scale of outcome if successful |
-| 10 | Limitations & risk awareness | 5 | Honestly identifies risks/failure modes + mitigations |
-| | **Total** | **100** | |
+| # | Criterion (EN) | معیار (FA) | Weight |
+|---|---|---|---:|
+| 1 | Relevance to the challenge | ارتباط با چالش | 12 |
+| 2 | Scientific accuracy | دقت علمی | 14 |
+| 3 | Methodological soundness | استحکام روش‌شناسی | 13 |
+| 4 | Innovation & originality | نوآوری و اصالت | 12 |
+| 5 | Creativity of the idea | خلاقیت ایده | 8 |
+| 6 | Practical feasibility | امکان‌سنجی عملی | 11 |
+| 7 | Technical depth | عمق فنی | 10 |
+| 8 | Clarity & structure | شفافیت و ساختار | 7 |
+| 9 | Potential impact | اثرگذاری بالقوه | 8 |
+| 10 | Limitations & risk awareness | آگاهی از محدودیت‌ها و ریسک | 5 |
+| | **Total** | **جمع کل** | **100** |
 
-**Scoring anchors** (given to the LLM per criterion): `9–10` = genuinely
-excellent; `5–7` = competent but ordinary; `0–2` = poor/absent. This calibration
-prevents score inflation.
-
-**Integrity penalty:** each detected integrity issue subtracts 5 points, capped
-at −25, so a single evaluation can't be driven arbitrarily negative.
-
-> The weights are a **starting point** for scientific/academic evaluation. Edit
-> `config.RUBRIC` to re-weight for a specific challenge (e.g. bump *feasibility*
-> for an engineering call, or *innovation* for a research grant).
+**Anchors** (given to the LLM per criterion): `9–10` excellent, `5–7`
+competent-but-ordinary, `0–2` poor/absent — preventing score inflation.
+**Integrity penalty:** −5 per detected issue, capped at −25. Re-weight by
+editing `config.RUBRIC`.
 
 ---
 
-## 4. Quick start
+## 5. Quick start
 
 ```bash
-# 1. Install dependencies
+# 1. System libraries for the PDF engine (weasyprint) + a Persian font
+sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+                        libgdk-pixbuf-2.0-0 fonts-vazirmatn
+# (Optional, for exact fonts) install "B Nazanin" and "Times New Roman",
+# or drop "B Nazanin.ttf" into ./fonts/
+
+# 2. Python dependencies
 pip install -r requirements.txt
 
-# 2. (Demo) create sample participant .docx files
+# 3. (Demo) create sample EXISTING participant .docx files
 python examples/generate_sample_submissions.py
 
-# 3a. Run OFFLINE with the deterministic mock backend (no API key needed)
+# 4a. Offline demo with the deterministic mock backend (no API key, Persian)
 python main.py \
   --challenge config/challenge_example.json \
   --submissions examples/submissions \
-  --out output/report.docx --mock
+  --out output/report --format both --mock
 
-# 3b. Run a REAL evaluation with Claude
+# 4b. Real evaluation with Claude
 export ANTHROPIC_API_KEY=sk-ant-...
 python main.py \
   --challenge config/challenge_example.json \
   --submissions examples/submissions \
-  --out output/report.docx
+  --out output/report --format both
 ```
 
-Outputs: `output/report.docx` (integrated report) and, with `--json-out`, a raw
-`result.json` for programmatic use.
+Outputs: `output/report.docx` **and** `output/report.pdf` (Persian, RTL).
+`--format` accepts `both` (default), `docx`, `pdf`, or `md`; `--lang English`
+switches to the English Word/Markdown renderer.
 
 **Library usage:**
 
@@ -184,262 +202,172 @@ from scientific_evaluator.llm_client import AnthropicLLMClient
 
 agent = ScientificEvaluationAgent("config/challenge_example.json",
                                   AnthropicLLMClient())
-result = agent.run("examples/submissions")          # folder of .docx
-agent.export_report(result, "output/report.docx")   # Word report
-
+result = agent.run("path/to/submissions")            # folder of existing .docx
+files = agent.export_report(result, "output/report", fmt="both")  # .docx + .pdf
 for e in result.ranked_evaluations():
     print(e.participant_id, e.total_score)
 ```
 
 ---
 
-## 5. Step-by-step implementation plan
+## 6. Step-by-step implementation plan
 
-This repository already implements every step below; the list doubles as a build
-guide.
-
-1. **Define the challenge model & loader** (`models.Challenge`, `challenge.py`).
-   Represent any-domain challenges as structured data (background, objectives,
-   constraints, expected outputs, reviewer notes) loaded from JSON. Validate
-   required fields.
-2. **Read Word files** (`document_reader.py`). Use `python-docx` to extract
-   paragraphs *and* table cells; skip Word lock files; give clear errors for
-   unsupported formats.
-3. **Clean & package text** (`preprocessing.py`). Normalize whitespace/unicode,
-   strip control chars, keep all scientific content (numbers, units, equations),
-   detect a title, cap length (head+tail) → `Submission`.
-4. **Build a swappable LLM client** (`llm_client.py`). One interface,
-   `complete_text` / `complete_json`; real Anthropic backend with retries +
-   exponential backoff; robust JSON extraction (handles code fences/prose); an
-   offline deterministic `MockLLMClient` for tests/demos.
-5. **Design the prompts** (`prompts.py`). A strong reviewer persona + explicit
-   rubric anchors + strict JSON schemas for: scoring, innovation extraction,
-   comparison/ranking, synthesis, and recommendation.
-6. **Evaluation engine** (`evaluation_engine.py`). Ask the LLM for a 0–10 score
-   *plus justification* per criterion, and per-submission strengths/weaknesses
-   and integrity flags.
-7. **Scoring module** (`scoring_engine.py`). Convert raw 0–10 scores into
-   weighted points, clamp to range, apply integrity penalty, compute `/100`.
-   All scoring math lives here for transparency.
-8. **Innovation extraction** (`innovation_extractor.py`). A separate pass that
-   returns main innovations, creative aspects, unique advantages, strong
-   technical ideas, potential research contributions, and gaps.
-9. **Comparison & ranking** (`comparison.py`). Feed compact evaluation digests
-   to the LLM; get a ranking + rationale + pairwise notes + overlapping/unique/
-   complementary ideas; **reconcile** the ranking with numeric scores.
-10. **Synthesis** (`synthesis.py`). Generate an improved combined solution and a
-    concise, decision-oriented final recommendation.
-11. **Report generation** (`report_generator.py`). Assemble everything into a
-    structured `.docx` (challenge summary, rubric, score table, individual
-    reviews, innovation table, ranking, recommendation, synthesized solution);
-    Markdown export too.
-12. **Orchestrate & expose** (`agent.py`, `main.py`). One class + a CLI with a
-    progress callback and JSON dump.
-13. **Test** (`tests/test_scoring.py`). Rubric integrity, scoring math edge
-    cases, JSON parsing, and a full pipeline run on the mock backend.
+1. **Challenge model & loader** (`models.Challenge`, `challenge.py`) — any-domain
+   challenges from JSON, validated.
+2. **Read existing Word files** (`document_reader.py`) — paragraphs + table cells.
+3. **Clean & package text** (`preprocessing.py`) — normalize, keep all scientific
+   content, cap length → `Submission`.
+4. **Swappable LLM client** (`llm_client.py`) — Anthropic backend with retries;
+   robust JSON extraction; offline Persian mock for tests/demos.
+5. **Prompts** (`prompts.py`) — reviewer persona + rubric anchors + strict JSON
+   schemas; a **language directive** makes the model answer in Persian.
+6. **Evaluation engine** (`evaluation_engine.py`) — 0–10 per criterion with
+   justifications, strengths/weaknesses, integrity flags.
+7. **Scoring module** (`scoring_engine.py`) — weighted points, clamp, penalty,
+   `/100`.
+8. **Innovation extraction** (`innovation_extractor.py`).
+9. **Improvement engine** (`improvement.py`) — improvement solutions per idea.
+10. **Comparison & ranking** (`comparison.py`) — ranking + salient/distinctive +
+    overlapping/unique/complementary; ranking reconciled with scores.
+11. **Synthesis** (`synthesis.py`) — integrate existing ideas + improvements into
+    one comprehensive solution + a final recommendation.
+12. **Report builder** (`report_builder.py`) — one ordered list of blocks in
+    Persian (headings, paragraphs, bullets, tables, images).
+13. **Charts** (`charts.py`) — bar chart of totals + heatmap of per-criterion
+    scores, Persian labels shaped with arabic_reshaper + python-bidi.
+14. **Renderers** — `persian_report.py` (RTL `.docx`, fonts) and `pdf_report.py`
+    (weasyprint PDF, fonts embedded) consume the same blocks.
+15. **Orchestrate & expose** (`agent.py`, `main.py`).
+16. **Test** (`tests/test_scoring.py`) — rubric integrity, scoring math, JSON
+    parsing, full pipeline, Persian `.docx` and `.pdf` export.
 
 ---
 
-## 6. Python libraries required
+## 7. Python libraries & system dependencies
 
 | Library | Purpose |
 |---|---|
-| `anthropic` | LLM calls (Claude) for evaluation, comparison, synthesis |
-| `python-docx` | Read participant `.docx` files **and** write the `.docx` report |
-| `pandas` | Convenient tabular handling of scores (optional; report tables work without it) |
-| `rich` | Nicer CLI progress/output (optional) |
-| `python-dotenv` | Load `ANTHROPIC_API_KEY` from a `.env` file (optional) |
+| `anthropic` | LLM calls (Claude) for evaluation, improvement, comparison, synthesis |
+| `python-docx` | Read participant `.docx` **and** write the Word report |
+| `weasyprint` | Render the Persian RTL **PDF** (HTML→PDF, embeds fonts) |
+| `matplotlib` | Analytical charts (bar + heatmap) |
+| `arabic_reshaper`, `python-bidi` | Correct Persian shaping in chart labels |
+| `pandas`, `rich`, `python-dotenv` | Optional (tables / CLI polish / `.env`) |
 
-Only `anthropic` and `python-docx` are strictly required for a real run.
-The **mock backend and unit tests need no network and no API key.**
-To swap providers (OpenAI, Gemini, local models), implement one class — see
-[Extending the agent](#10-extending-the-agent).
+**System libraries** (for weasyprint): `libpango-1.0-0`, `libpangocairo-1.0-0`,
+`libcairo2`, `libgdk-pixbuf-2.0-0`.
+**Fonts:** a Persian font (**B Nazanin** if available, otherwise **Vazirmatn**)
+and a serif Latin font (**Times New Roman**, or the metric-identical
+**Liberation Serif**). Only `anthropic` + `python-docx` are needed for a Word-only
+run; the mock backend and tests need no network or API key.
 
 ---
 
-## 7. Code structure & pseudocode
+## 8. Code structure
 
 ```
 test_ai/
 ├── README.md
 ├── requirements.txt
-├── main.py                     # CLI entry point
-├── config/
-│   └── challenge_example.json  # example challenge (remote sensing / agriculture)
-├── examples/
-│   └── generate_sample_submissions.py   # makes 3 demo .docx (strong/medium/weak)
+├── main.py                     # CLI (--format both|docx|pdf|md, --lang, --mock)
+├── config/challenge_example.json
+├── fonts/                      # (optional) drop "B Nazanin.ttf" here for exact PDF fonts
+├── examples/generate_sample_submissions.py   # makes demo EXISTING .docx
 ├── scientific_evaluator/
-│   ├── __init__.py             # public API
-│   ├── config.py               # RUBRIC (weights) + SETTINGS
-│   ├── models.py               # Challenge, Submission, *Score, *Evaluation, Result
-│   ├── challenge.py            # challenge input module
+│   ├── config.py               # rubric (weights + Persian names) + settings
+│   ├── models.py               # Challenge, Submission, IdeaImprovement, *Result …
+│   ├── challenge.py            # challenge input
 │   ├── document_reader.py      # Word reader
 │   ├── preprocessing.py        # text cleaning
 │   ├── llm_client.py           # Anthropic + Mock backends, JSON extraction
-│   ├── prompts.py              # all prompt templates
+│   ├── prompts.py              # all prompt templates (Persian-directed)
 │   ├── evaluation_engine.py    # per-criterion scoring
 │   ├── scoring_engine.py       # weighted-rubric math
 │   ├── innovation_extractor.py # novelty/creativity extraction
-│   ├── comparison.py           # ranking + cross-analysis
-│   ├── synthesis.py            # improved solution + recommendation
-│   ├── report_generator.py     # Word/Markdown report
+│   ├── improvement.py          # per-idea improvement solutions        (#3)
+│   ├── comparison.py           # ranking + salient/distinctive points  (#2)
+│   ├── synthesis.py            # integrated comprehensive solution     (#1,#4)
+│   ├── report_builder.py       # shared report blocks (Persian)
+│   ├── fonts.py                # font discovery for the PDF
+│   ├── charts.py               # matplotlib charts (Persian labels)
+│   ├── persian_report.py       # RTL .docx renderer                    (#5)
+│   ├── pdf_report.py           # weasyprint PDF renderer               (#5)
+│   ├── report_generator.py     # optional English Word/Markdown renderer
 │   └── agent.py                # orchestrator
-└── tests/
-    └── test_scoring.py         # unit + end-to-end (mock) tests
+└── tests/test_scoring.py       # unit + end-to-end (mock) tests
 ```
 
-**Orchestrator pseudocode** (`agent.run`):
-
-```
-function run(submissions_folder):
-    submissions = for each .docx in folder:
-        raw   = read_docx(file)                 # document_reader
-        clean = clean_text(raw)                 # preprocessing
-        yield Submission(id=filestem, text=clean)
-
-    evaluations = for each submission:
-        scores      = evaluation_engine.evaluate(challenge, submission)  # 0-10 per criterion
-        scores.total = scoring_engine.weighted_sum(scores) - penalty     # /100
-        scores.innovation = innovation_extractor.extract(challenge, submission)
-        yield scores
-
-    comparison = comparison_engine.compare(challenge, evaluations)   # rank + ideas
-    solution   = synthesis.synthesize_solution(challenge, evaluations, comparison)
-    recommend  = synthesis.final_recommendation(challenge, evaluations, comparison)
-
-    return EvaluationResult(challenge, evaluations, comparison, solution, recommend)
-```
-
-**Scoring math** (`scoring_engine`):
-
-```
-contribution(criterion) = (raw_score / 10) * criterion.max_points
-total = clamp(sum(contribution for all criteria) - integrity_penalty, 0, 100)
-```
+**Scoring math:** `total = clamp(Σ (raw/10 × weight) − penalty, 0, 100)`.
 
 ---
 
-## 8. Example prompts used inside the agent
+## 9. Example prompts
 
-All prompts live in `prompts.py`. Shortened examples:
+All prompts live in `prompts.py`; each carries a language directive
+(`Write all human-readable text in Persian; keep JSON keys in English`).
 
-**Reviewer persona (system, shared):**
+**Reviewer persona (shared, system):** a rigorous, skeptical senior scientific
+peer reviewer across engineering, medicine, environmental science, remote
+sensing, AI, agriculture and energy; judges quality/novelty/feasibility, never
+invents facts about a submission.
 
-> You are a rigorous, skeptical senior scientific peer reviewer and innovation
-> evaluator with deep expertise across engineering, medicine, environmental
-> science, remote sensing, AI, agriculture and energy. You judge research
-> quality, novelty, creativity, feasibility and scientific validity — not
-> surface polish. … You never invent facts about a submission; you assess only
-> what is written.
+**Improvement (system, excerpt):** *“For EACH given idea taken from this
+submission, propose a set of concrete IMPROVEMENT SOLUTIONS. Each solution must
+be actionable and must move the idea CLOSER to solving the challenge … Do not
+merely restate the idea — improve it.”* → JSON `{idea, why_it_matters,
+improvements[], expected_effect}`.
 
-**Scoring prompt (system, excerpt):**
+**Comparison (system, excerpt):** *“For EACH answer list its SALIENT points … and
+its DISTINCTIVE points (what makes it different from the others).”* → JSON with
+`ranking, salient_points{}, distinctive_points{}, overlapping_ideas[],
+unique_ideas{}, complementary_ideas[]`.
 
-> TASK: Score ONE submission against the CHALLENGE using the RUBRIC.
-> RUBRIC (score each criterion 0-10 using this guidance): …
-> Rules: 1) Score strictly from evidence in the submission. 2) Every score needs
-> a concrete justification referencing the content. 3) Be calibrated: reserve
-> 9-10 for genuinely excellent work; competent-but-ordinary work sits at 5-7.
-> 4) Distinguish novelty from mere correctness. 5) Respond with ONLY a JSON
-> object matching the schema.
-
-**Scoring output schema (enforced):**
-
-```json
-{
-  "criterion_scores": {
-    "relevance": {"raw_score": 0-10, "justification": "..."},
-    "scientific_accuracy": {"raw_score": 0-10, "justification": "..."},
-    "...": {}
-  },
-  "summary": "3-4 sentence overall assessment",
-  "strengths": ["..."],
-  "weaknesses": ["..."],
-  "integrity_flags": ["only if overclaiming/fabrication/off-topic"]
-}
-```
-
-**Innovation extraction (schema):**
-
-```json
-{
-  "main_innovations": ["..."],
-  "creative_aspects": ["..."],
-  "unique_advantages": ["..."],
-  "strong_technical_ideas": ["..."],
-  "potential_research_contributions": ["..."],
-  "weaknesses_or_missing_parts": ["..."]
-}
-```
-
-**Comparison / ranking (schema):**
-
-```json
-{
-  "ranking": ["participant_id best first", "..."],
-  "rationale": "why this order, grounded in criteria",
-  "pairwise_notes": ["why X beats Y"],
-  "overlapping_ideas": ["ideas shared across submissions"],
-  "unique_ideas": {"participant_id": ["ideas only they have"]},
-  "complementary_ideas": ["ideas from different answers that combine well"]
-}
-```
-
-**Synthesis (system, excerpt):**
-
-> Design a SINGLE improved solution that combines the strongest, most feasible
-> and most novel ideas across all submissions, while fixing their common
-> weaknesses. Structure with headings: Approach, Methodology, Why it is superior,
-> Feasibility & resources, Risks & mitigations, Expected impact.
+**Synthesis (system, excerpt):** *“Produce ONE final, comprehensive solution by
+INTEGRATING the ideas that already exist in the submitted answers TOGETHER WITH
+the improvement solutions … Build ONLY from ideas that actually appear in the
+submissions. Do NOT invent an unrelated new answer.”*
 
 ---
 
-## 9. Example report format
+## 10. Report format & fonts
 
-The exported `report.docx` (and `report.md`) contains, in order:
+The `report.docx` and `report.pdf` (identical content) contain, in Persian:
 
-1. **Challenge summary** — background, objectives, constraints, expected outputs.
-2. **Evaluation criteria & scoring rubric** — the weighted table.
-3. **Score table** — rank × participant × per-criterion 0–10 × total /100.
-4. **Individual reviews** — per participant: final score, summary,
-   per-criterion justification, strengths, weaknesses, integrity flags.
-5. **Innovation & creativity table** — main innovations / creative & unique
-   advantages / weaknesses per participant.
-6. **Comparative ranking** — ordered list + rationale + head-to-head notes +
-   overlapping/complementary ideas.
-7. **Final recommendation** — decisive, evidence-based.
-8. **Synthesized improved solution** — the fused best-of-all-answers design.
+1. **خلاصه چالش** — challenge summary (background, objectives, constraints, outputs)
+2. **معیارها و سامانه امتیازدهی** — rubric table
+3. **جدول امتیازها و نمودارهای تحلیلی** — score table + **bar chart** (totals) +
+   **heatmap** (per-criterion 0–10)
+4. **بررسی انفرادی هر پاسخ** — per-answer review + per-criterion justification
+5. **جدول نوآوری و خلاقیت** — innovation & creativity table
+6. **راه‌حل‌های بهبود هر ایده** — per-idea improvement solutions table (#3)
+7. **مقایسه پاسخ‌ها: نقاط برجسته و متمایز** — salient/distinctive table + ranking
+   + overlapping/complementary ideas (#2)
+8. **توصیه نهایی** — final recommendation
+9. **راه‌حل جامع و نهایی** — integrated comprehensive solution (#1, #4)
 
-Score-table sketch:
-
-| Rank | Participant | Relev. | Sci.Acc | Method | Innov | … | Total /100 |
-|---|---|---|---|---|---|---|---|
-| 1 | participant_A | 9 | 8 | 9 | 8 | … | 86.4 |
-| 2 | participant_B | 7 | 6 | 6 | 5 | … | 61.0 |
-| 3 | participant_C | 4 | 3 | 2 | 6 | … | 38.5 |
-
----
-
-## 10. Extending the agent
-
-- **Re-weight the rubric:** edit `config.RUBRIC` (weights auto-validated to 100).
-- **Change the model / temperature:** edit `config.SETTINGS` or pass `--model`.
-- **Swap the LLM provider:** subclass `BaseLLMClient` and implement
-  `complete_text`; pass your client into `ScientificEvaluationAgent`.
-- **Add file formats (PDF/`.doc`):** add a reader in `document_reader.py` and
-  route by extension.
-- **Plagiarism / similarity checks:** add a module that embeds submissions and
-  flags high pairwise similarity, feeding `integrity_flags`.
-- **Human-in-the-loop:** the JSON dump (`--json-out`) lets reviewers adjust
-  scores before regenerating the report.
+**Fonts.** In the Word file, Persian runs are tagged with the complex-script font
+**B Nazanin** and Latin runs with **Times New Roman** — so on any machine that
+has those fonts, Word renders them exactly. In the PDF, the same split is
+enforced with CSS font fallback (Latin → Times New Roman/Liberation Serif;
+Persian → B Nazanin, or Vazirmatn as a redistributable fallback if B Nazanin
+isn't installed). Drop a real `B Nazanin.ttf` into `./fonts/` to embed it exactly
+in the PDF.
 
 ---
 
-### Notes & limitations
+## 11. Notes & limitations
 
-- LLM evaluations are **assistive, not authoritative** — use them to support, not
-  replace, expert human judgement, especially for high-stakes decisions.
-- The `MockLLMClient` produces **hash-based placeholder scores** so the pipeline
-  runs offline; its rankings are meaningless. Use a real backend for genuine
-  evaluation.
-- Very long submissions are truncated (head+tail) to a configurable character
-  cap (`SETTINGS.max_submission_chars`); raise it or add chunking for long docs.
+- **LLM evaluations are assistive, not authoritative** — use them to support, not
+  replace, expert human judgement, especially for high-stakes decisions. The
+  `--json-out` dump lets a reviewer adjust scores before regenerating the report.
+- **Offline mock** produces hash-based placeholder scores (Persian text) so the
+  pipeline runs without an API key; its rankings are meaningless — use a real
+  backend for genuine evaluation.
+- **PDF engine.** The PDF is produced by weasyprint (self-contained). A
+  LibreOffice `.docx`→PDF helper (`persian_report.convert_docx_to_pdf_libreoffice`)
+  is also included for environments where LibreOffice is available and the exact
+  B Nazanin font is installed.
+- **B Nazanin** is not redistributable here, so it is not committed; the Word file
+  names it and the PDF falls back to Vazirmatn unless you supply `B Nazanin.ttf`.
+- Very long submissions are truncated (head+tail) to `SETTINGS.max_submission_chars`;
+  raise it or add chunking for long documents.

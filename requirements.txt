@@ -4,6 +4,17 @@ anthropic>=0.40.0
 # Word document reading & writing
 python-docx>=1.1.0
 
+# Persian (RTL) PDF rendering (HTML -> PDF). Needs system libs:
+#   libpango-1.0-0, libpangocairo-1.0-0, libcairo2, libgdk-pixbuf-2.0-0
+weasyprint>=60.0
+
+# Charts for the analytical report
+matplotlib>=3.7.0
+
+# Correct Persian/Arabic shaping in chart labels
+arabic_reshaper>=3.0.0
+python-bidi>=0.4.2
+
 # Data handling / tables
 pandas>=2.0.0
 
@@ -12,3 +23,7 @@ rich>=13.0.0
 
 # Optional: .env support for API keys
 python-dotenv>=1.0.0
+
+# Note: a Persian font ("B Nazanin" if you have it, otherwise Vazirmatn) and a
+# serif Latin font (Times New Roman / Liberation Serif) must be installed for
+# the PDF to embed them. Drop a "B Nazanin.ttf" into ./fonts to use it exactly.

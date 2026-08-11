@@ -18,6 +18,11 @@ output/
 reports/
 *.docx
 !examples/**/*.docx
+*.pdf
+
+# Font binaries (e.g. B Nazanin) are not redistributable — keep them local
+fonts/*.ttf
+fonts/*.otf
 
 # OS / editor
 .DS_Store

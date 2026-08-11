@@ -44,17 +44,21 @@ class ComparisonEngine:
             evaluations=evaluations,
         )
 
-        unique = data.get("unique_ideas", {}) or {}
-        if not isinstance(unique, dict):
-            unique = {}
+        def _dict_of_lists(key: str) -> dict:
+            value = data.get(key, {}) or {}
+            if not isinstance(value, dict):
+                return {}
+            return {k: list(v) for k, v in value.items() if isinstance(v, list)}
 
         return ComparisonResult(
             ranking=ranking,
             rationale=str(data.get("rationale", "")).strip(),
             pairwise_notes=list(data.get("pairwise_notes", []) or []),
             overlapping_ideas=list(data.get("overlapping_ideas", []) or []),
-            unique_ideas={k: list(v) for k, v in unique.items()},
+            unique_ideas=_dict_of_lists("unique_ideas"),
             complementary_ideas=list(data.get("complementary_ideas", []) or []),
+            salient_points=_dict_of_lists("salient_points"),
+            distinctive_points=_dict_of_lists("distinctive_points"),
         )
 
     @staticmethod

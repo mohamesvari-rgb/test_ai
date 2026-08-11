@@ -74,7 +74,7 @@ def test_weighted_points_math():
     assert abs(compute_total(scores) - 50.0) < 1e-6
 
 
-def test_end_to_end_pipeline_with_mock():
+def _demo_result(n=3):
     challenge = Challenge(
         title="Test challenge",
         field="testing",
@@ -89,10 +89,14 @@ def test_end_to_end_pipeline_with_mock():
             title=f"Title {i}",
             word_count=8,
         )
-        for i in range(3)
+        for i in range(n)
     ]
     agent = ScientificEvaluationAgent(challenge, MockLLMClient())
-    result = agent.run(subs)
+    return agent, agent.run(subs), subs
+
+
+def test_end_to_end_pipeline_with_mock():
+    _agent, result, subs = _demo_result(3)
 
     # Every submission is evaluated and scored in range.
     assert len(result.evaluations) == 3
@@ -106,6 +110,63 @@ def test_end_to_end_pipeline_with_mock():
     # Synthesis and recommendation are produced.
     assert result.synthesized_solution
     assert result.final_recommendation
+
+
+def test_idea_improvements_are_generated():
+    _agent, result, _subs = _demo_result(2)
+    for e in result.evaluations:
+        assert e.idea_improvements, "each submission should get idea improvements"
+        for imp in e.idea_improvements:
+            assert imp.idea
+            assert imp.improvements  # at least one improvement solution
+
+
+def test_comparison_has_salient_and_distinctive_points():
+    _agent, result, subs = _demo_result(3)
+    comp = result.comparison
+    for s in subs:
+        assert s.participant_id in comp.salient_points
+        assert s.participant_id in comp.distinctive_points
+
+
+def test_persian_report_export_docx(tmp_path=None):
+    import tempfile
+    from scientific_evaluator.persian_report import PersianReportGenerator
+    _agent, result, _subs = _demo_result(3)
+    out_dir = Path(tempfile.mkdtemp())
+    out = PersianReportGenerator().generate(result, out_dir / "fa_report.docx")
+    assert out.exists() and out.stat().st_size > 0
+
+    # Verify the document actually contains Persian section headings + tables.
+    import docx
+    doc = docx.Document(str(out))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "گزارش ارزیابی علمی" in text          # cover title
+    assert "راه‌حل جامع" in text                  # integrated solution section
+    assert len(doc.tables) >= 4                    # rubric+scores+innovation+more
+
+
+def test_persian_report_export_pdf():
+    """PDF export via weasyprint (skipped if weasyprint is unavailable)."""
+    try:
+        import weasyprint  # noqa: F401
+    except Exception:
+        print("SKIP test_persian_report_export_pdf (weasyprint not installed)")
+        return
+    import tempfile
+    from scientific_evaluator import charts as charts_mod
+    from scientific_evaluator.pdf_report import render_blocks_to_pdf
+    from scientific_evaluator.report_builder import build_report_blocks
+
+    _agent, result, _subs = _demo_result(3)
+    with tempfile.TemporaryDirectory() as d:
+        charts = (charts_mod.generate_charts(result, d)
+                  if charts_mod.charts_available() else [])
+        blocks = build_report_blocks(result, charts)
+        out = render_blocks_to_pdf(blocks, Path(d) / "fa_report.pdf")
+        data = out.read_bytes()
+        assert data[:4] == b"%PDF"          # valid PDF header
+        assert len(data) > 3000             # non-trivial content
 
 
 if __name__ == "__main__":

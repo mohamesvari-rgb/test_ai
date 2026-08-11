@@ -94,6 +94,21 @@ class InnovationProfile:
 
 
 @dataclass
+class IdeaImprovement:
+    """A single idea extracted from a submission plus concrete ways to improve it.
+
+    Each improvement is a solution that makes the idea more effective at solving
+    the challenge (better feasibility, accuracy, novelty, impact, etc.).
+    """
+
+    idea: str                                    # the idea, as it appears in the answer
+    source_participant: str = ""                 # which submission the idea came from
+    why_it_matters: str = ""                     # its relevance to the challenge
+    improvements: List[str] = field(default_factory=list)   # solutions to improve it
+    expected_effect: str = ""                    # how the improvements help solve it
+
+
+@dataclass
 class SubmissionEvaluation:
     """The complete evaluation of one submission."""
 
@@ -106,6 +121,8 @@ class SubmissionEvaluation:
     weaknesses: List[str] = field(default_factory=list)
     integrity_flags: List[str] = field(default_factory=list)  # e.g. plagiarism/overclaim
     penalty: float = 0.0             # points subtracted for integrity issues
+    # Per-idea improvement solutions (requirement: improve each idea).
+    idea_improvements: List[IdeaImprovement] = field(default_factory=list)
 
     @property
     def total_score(self) -> float:
@@ -130,6 +147,9 @@ class ComparisonResult:
     overlapping_ideas: List[str] = field(default_factory=list)
     unique_ideas: Dict[str, List[str]] = field(default_factory=dict)  # id -> ideas
     complementary_ideas: List[str] = field(default_factory=list)
+    # Requirement: examine each answer's salient and distinctive points.
+    salient_points: Dict[str, List[str]] = field(default_factory=dict)     # id -> points
+    distinctive_points: Dict[str, List[str]] = field(default_factory=dict)  # id -> points
 
 
 @dataclass
@@ -166,6 +186,7 @@ class EvaluationResult:
                     "penalty": e.penalty,
                     "criterion_scores": [asdict(c) for c in e.criterion_scores],
                     "innovation": asdict(e.innovation),
+                    "idea_improvements": [asdict(i) for i in e.idea_improvements],
                     "summary": e.summary,
                     "strengths": e.strengths,
                     "weaknesses": e.weaknesses,

@@ -132,54 +132,108 @@ class MockLLMClient(BaseLLMClient):
         return 4 + (int(h[:4], 16) % 7)  # 4..10
 
     def complete_text(self, system: str, user: str) -> str:
-        # Route based on the kind of task encoded in the system prompt.
-        if "CRITERION" in system or "rubric" in system.lower():
+        """Route on the unique TASK marker in the system prompt.
+
+        Persian is used for human-readable values so the offline demo exercises
+        the RTL report rendering. (Real evaluations use a live backend.)
+        """
+        if "TASK: Score ONE submission" in system:
             return self._mock_scores(user)
-        if "innovation" in system.lower():
+        if "TASK: Extract the INNOVATION" in system:
             return self._mock_innovation(user)
-        if "compare" in system.lower() or "ranking" in system.lower():
+        if "TASK: For EACH given idea" in system:
+            return self._mock_improvement(user)
+        if "TASK: COMPARE and RANK" in system:
             return self._mock_comparison(user)
-        return "Mock synthesis: combine the strongest, most feasible ideas."
+        if "TASK: Produce ONE final" in system:
+            return self._mock_synthesis()
+        if "TASK: Write a concise FINAL RECOMMENDATION" in system:
+            return self._mock_recommendation()
+        return "خروجی آزمایشی (mock)."
 
     def _mock_scores(self, user: str) -> str:
         from .config import RUBRIC
         scores = {
             c.key: {
                 "raw_score": self._score_from(user, c.key),
-                "justification": f"[mock] Assessment of {c.name.lower()}.",
+                "justification": f"[نمونه] ارزیابی معیار «{c.name}» بر پایه متن پاسخ.",
             }
             for c in RUBRIC
         }
         payload = {
             "criterion_scores": scores,
-            "summary": "[mock] Reasonable submission with clear strengths.",
-            "strengths": ["[mock] clear objective", "[mock] plausible method"],
-            "weaknesses": ["[mock] limited validation", "[mock] cost unclear"],
+            "summary": "[نمونه] پاسخی منسجم و مرتبط با چالش با نقاط قوت روشن.",
+            "strengths": ["[نمونه] هدف‌گذاری روشن", "[نمونه] روش‌شناسی قابل‌قبول"],
+            "weaknesses": ["[نمونه] اعتبارسنجی محدود", "[نمونه] برآورد هزینه نامشخص"],
             "integrity_flags": [],
         }
-        return json.dumps(payload)
+        return json.dumps(payload, ensure_ascii=False)
 
     def _mock_innovation(self, user: str) -> str:
         payload = {
-            "main_innovations": ["[mock] novel sensing pipeline"],
-            "creative_aspects": ["[mock] cross-domain analogy"],
-            "unique_advantages": ["[mock] low-cost hardware"],
-            "strong_technical_ideas": ["[mock] self-calibrating model"],
-            "potential_research_contributions": ["[mock] open benchmark"],
-            "weaknesses_or_missing_parts": ["[mock] no field trials"],
+            "main_innovations": ["[نمونه] خط لوله سنجش نوین"],
+            "creative_aspects": ["[نمونه] قیاس میان‌رشته‌ای"],
+            "unique_advantages": ["[نمونه] سخت‌افزار کم‌هزینه"],
+            "strong_technical_ideas": ["[نمونه] مدل خودکالیبره"],
+            "potential_research_contributions": ["[نمونه] معیار ارزیابی متن‌باز"],
+            "weaknesses_or_missing_parts": ["[نمونه] نبود آزمون میدانی"],
         }
-        return json.dumps(payload)
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _mock_improvement(self, user: str) -> str:
+        ideas = re.findall(r'"([^"]{4,})"', user.split("IDEAS TO IMPROVE")[-1])
+        ideas = ideas[:4] or ["[نمونه] ایده کلیدی"]
+        payload = {
+            "idea_improvements": [
+                {
+                    "idea": idea,
+                    "why_it_matters": "[نمونه] ارتباط مستقیم با اهداف چالش دارد.",
+                    "improvements": [
+                        "[نمونه] افزودن اعتبارسنجی میدانی برای افزایش دقت",
+                        "[نمونه] کاهش هزینه با اشتراک‌گذاری سنسورها",
+                    ],
+                    "expected_effect": "[نمونه] افزایش دقت و امکان‌سنجی راه‌حل.",
+                }
+                for idea in ideas
+            ]
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     def _mock_comparison(self, user: str) -> str:
         ids = re.findall(r'"participant_id"\s*:\s*"([^"]+)"', user)
-        if not ids:
-            ids = re.findall(r"\b(P\d+|participant_\w+|\S+?)\b(?=:)", user)[:5]
+        # De-duplicate while preserving order.
+        seen, uniq = set(), []
+        for i in ids:
+            if i not in seen:
+                seen.add(i); uniq.append(i)
+        ids = uniq or ["participant"]
         payload = {
             "ranking": ids,
-            "rationale": "[mock] Ranked by aggregate strength of method and impact.",
-            "pairwise_notes": ["[mock] top answer has stronger validation."],
-            "overlapping_ideas": ["[mock] both use remote sensing data"],
-            "unique_ideas": {i: [f"[mock] unique idea from {i}"] for i in ids},
-            "complementary_ideas": ["[mock] fusion of A's sensor + B's model"],
+            "rationale": "[نمونه] رتبه‌بندی بر پایه قدرت روش‌شناسی و اثرگذاری کلی.",
+            "salient_points": {i: [f"[نمونه] نقطه برجسته پاسخ {i}"] for i in ids},
+            "distinctive_points": {i: [f"[نمونه] وجه تمایز پاسخ {i}"] for i in ids},
+            "pairwise_notes": ["[نمونه] پاسخ برتر اعتبارسنجی قوی‌تری دارد."],
+            "overlapping_ideas": ["[نمونه] استفاده مشترک از داده سنجش از دور"],
+            "unique_ideas": {i: [f"[نمونه] ایده منحصربه‌فرد {i}"] for i in ids},
+            "complementary_ideas": ["[نمونه] ترکیب سنسور A با مدل B"],
         }
-        return json.dumps(payload)
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _mock_synthesis(self) -> str:
+        return (
+            "# مرور کلی\n"
+            "[نمونه] راه‌حل جامع از ترکیب ایده‌های موجود در پاسخ‌ها ساخته شده است.\n"
+            "# روش‌شناسی یکپارچه\n"
+            "[نمونه] تلفیق داده سنجش از دور با سنسورهای کم‌هزینه و مدل خودکالیبره.\n"
+            "# چرا این ترکیب چالش را حل می‌کند\n"
+            "[نمونه] دقت بالاتر، هزینه کمتر و مقیاس‌پذیری بیشتر.\n"
+            "# اثر مورد انتظار\n"
+            "[نمونه] هشدار زودهنگام تنش آبی با هزینه مناسب."
+        )
+
+    def _mock_recommendation(self) -> str:
+        return (
+            "[نمونه] توصیه نهایی: پاسخ برتر به دلیل روش‌شناسی منسجم و امکان‌سنجی "
+            "بالا انتخاب می‌شود؛ پیش از اجرا، اعتبارسنجی میدانی و برآورد دقیق هزینه "
+            "تکمیل گردد."
+        )
