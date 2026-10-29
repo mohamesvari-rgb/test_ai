@@ -2,10 +2,16 @@
 LLM client wrapper.
 
 Provides a thin, swappable interface around the LLM so the evaluation logic
-does not depend on any specific SDK. Two implementations are shipped:
+does not depend on any specific SDK. Implementations:
 
+* ``OpenAICompatibleLLMClient`` - any OpenAI-compatible API (AvalAI, DeepSeek,
+  OpenRouter, LM Studio, vLLM, ...). Standard library only.
+* ``OllamaLLMClient``    - a local Ollama server: fully offline.
 * ``AnthropicLLMClient`` - real Claude calls (needs ANTHROPIC_API_KEY).
 * ``MockLLMClient``      - deterministic offline stub for tests/demos.
+
+``build_llm_client(provider, ...)`` creates the right one from a preset in
+``config.PROVIDERS``.
 
 All clients expose ``complete_json(system, user)`` which returns a parsed
 ``dict`` (the models are always instructed to answer with JSON) and
@@ -18,15 +24,69 @@ import hashlib
 import json
 import os
 import re
+import socket
 import time
+import urllib.error
+import urllib.request
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Callable, Dict, List, Optional
 
-from .config import SETTINGS
+from .config import SETTINGS, get_provider
 
 
 class LLMError(RuntimeError):
     """Raised when the LLM call fails after retries."""
+
+
+class _FatalLLMError(LLMError):
+    """A failure that retrying cannot fix (bad key, missing model, server down)."""
+
+
+class _HTTPStatusError(LLMError):
+    """A non-2xx HTTP answer from an LLM endpoint."""
+
+    def __init__(self, status: int, body: str, url: str):
+        super().__init__(f"HTTP {status} from {url}: {body[:400]}")
+        self.status = status
+        self.body = body
+
+
+# Statuses worth retrying (rate limit / overloaded / gateway hiccups).
+_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
+
+
+def _strip_reasoning(text: str) -> str:
+    """Drop ``<think>...</think>`` blocks that reasoning models prepend."""
+    return re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
+
+
+def _http_json(
+    url: str,
+    payload: Optional[dict] = None,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: float = 300,
+) -> Dict[str, Any]:
+    """POST (or GET when ``payload`` is None) JSON and return the parsed reply."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="POST" if data is not None else "GET",
+        headers={"Content-Type": "application/json", "Accept": "application/json",
+                 **(headers or {})},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        raise _HTTPStatusError(exc.code, body, url) from exc
+    except urllib.error.URLError as exc:
+        raise LLMError(f"Cannot reach {url}: {exc.reason}") from exc
+    except (socket.timeout, TimeoutError) as exc:
+        raise LLMError(f"Timed out after {timeout:.0f}s waiting for {url}") from exc
+    except json.JSONDecodeError as exc:
+        raise LLMError(f"Non-JSON reply from {url}: {exc}") from exc
 
 
 def extract_json(text: str) -> Dict[str, Any]:
@@ -56,6 +116,11 @@ def extract_json(text: str) -> Dict[str, Any]:
 
 class BaseLLMClient(ABC):
     """Interface every LLM backend must implement."""
+
+    # How many submissions the agent may evaluate concurrently with this client.
+    max_parallel: int = 1
+    # Human-readable "provider · model" label for progress logs.
+    description: str = ""
 
     @abstractmethod
     def complete_text(self, system: str, user: str) -> str:
@@ -89,6 +154,8 @@ class AnthropicLLMClient(BaseLLMClient):
             )
         self._client = anthropic.Anthropic(api_key=key)
         self.model = model or SETTINGS.model
+        self.max_parallel = SETTINGS.max_parallel
+        self.description = f"Anthropic · {self.model}"
 
     def complete_text(self, system: str, user: str) -> str:
         last_err: Exception | None = None
@@ -114,6 +181,247 @@ class AnthropicLLMClient(BaseLLMClient):
 
 
 # ---------------------------------------------------------------------------
+# Shared base for HTTP chat APIs (OpenAI-compatible + Ollama)
+# ---------------------------------------------------------------------------
+class _ChatAPIClient(BaseLLMClient):
+    """Retry policy and JSON repair shared by the HTTP chat clients."""
+
+    @abstractmethod
+    def _chat(self, system: str, user: str, json_mode: bool) -> str:
+        """Send one chat request and return the assistant text."""
+
+    def _with_retries(self, call: Callable[[], str]) -> str:
+        last_err: Exception | None = None
+        for attempt in range(SETTINGS.max_retries):
+            try:
+                return call()
+            except _FatalLLMError:
+                raise
+            except _HTTPStatusError as exc:
+                if exc.status not in _RETRYABLE_STATUS:
+                    raise                      # bad key, unknown model, ...: fail fast
+                last_err = exc
+            except LLMError as exc:            # network error / timeout
+                last_err = exc
+            if attempt < SETTINGS.max_retries - 1:
+                time.sleep(2 ** (attempt + 1))
+        raise LLMError(f"{self.description or 'LLM'} call failed after retries: {last_err}")
+
+    def complete_text(self, system: str, user: str) -> str:
+        return self._with_retries(lambda: self._chat(system, user, json_mode=False))
+
+    def complete_json(self, system: str, user: str) -> Dict[str, Any]:
+        text = self._with_retries(lambda: self._chat(system, user, json_mode=True))
+        try:
+            return extract_json(text)
+        except LLMError:
+            # Smaller and local models occasionally emit malformed JSON; one
+            # corrective round-trip fixes nearly all of these cases.
+            retry_user = (
+                user + "\n\nIMPORTANT: your previous reply was not valid JSON. "
+                "Reply again with ONLY the JSON object, no prose and no code fences."
+            )
+            return extract_json(
+                self._with_retries(lambda: self._chat(system, retry_user, json_mode=True))
+            )
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible backend (AvalAI, DeepSeek, OpenRouter, LM Studio, ...)
+# ---------------------------------------------------------------------------
+class OpenAICompatibleLLMClient(_ChatAPIClient):
+    """Client for any ``/chat/completions`` API that follows the OpenAI format."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        timeout: float = 300,
+        label: str = "",
+    ):
+        if not base_url:
+            raise LLMError("A base URL is required for an OpenAI-compatible API.")
+        if not model:
+            raise LLMError("A model name is required for an OpenAI-compatible API.")
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key or ""
+        self.model = model
+        self.timeout = timeout
+        self.json_mode_supported = True
+        self.max_parallel = SETTINGS.max_parallel
+        self.description = f"{label or self.base_url} · {model}"
+
+    def _chat(self, system: str, user: str, json_mode: bool) -> str:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": SETTINGS.temperature,
+            "max_tokens": SETTINGS.max_tokens,
+        }
+        if json_mode and self.json_mode_supported:
+            payload["response_format"] = {"type": "json_object"}
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            data = _http_json(f"{self.base_url}/chat/completions", payload,
+                              headers, self.timeout)
+        except _HTTPStatusError as exc:
+            if exc.status in (401, 403):
+                raise _FatalLLMError(
+                    f"The API rejected the key ({exc.status}). Check the API key "
+                    f"for {self.base_url}."
+                ) from exc
+            if (exc.status in (400, 422) and "response_format" in payload
+                    and self.json_mode_supported):
+                # Some gateways/models reject JSON mode; the prompts already
+                # demand JSON, so continue without it.
+                self.json_mode_supported = False
+                return self._chat(system, user, json_mode)
+            raise
+        try:
+            message = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError(f"Unexpected reply from {self.base_url}: {str(data)[:400]}") from exc
+        return _strip_reasoning(message.get("content") or "")
+
+
+# ---------------------------------------------------------------------------
+# Ollama backend (offline, local model)
+# ---------------------------------------------------------------------------
+def _approx_tokens(text: str) -> int:
+    # Persian text needs noticeably more tokens per character than English;
+    # three characters per token is a deliberately generous estimate.
+    return len(text) // 3 + 1
+
+
+class OllamaLLMClient(_ChatAPIClient):
+    """Client for a local Ollama server via its native ``/api/chat`` endpoint.
+
+    The native endpoint (unlike Ollama's OpenAI shim) lets us set the context
+    window, force JSON output and switch off "thinking", all of which matter
+    for long Persian prompts on a laptop GPU.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model: str | None = None,
+        num_ctx: int | None = None,
+        timeout: float = 1800,
+    ):
+        preset = get_provider("ollama")
+        self.base_url = (base_url or preset.resolved_base_url()).rstrip("/")
+        self.model = model or preset.resolved_model()
+        self.num_ctx = num_ctx or SETTINGS.ollama_num_ctx
+        self.timeout = timeout
+        self.send_think = True
+        self.max_parallel = 1          # one GPU: requests would only queue up
+        self.description = f"Ollama (offline) · {self.model}"
+
+    def _context_for(self, system: str, user: str) -> int:
+        # Changing num_ctx makes Ollama reload the model, so the default is
+        # sized for typical prompts and only grows for an unusually long one.
+        # 4k tokens of headroom covers every answer the prompts ask for.
+        needed = _approx_tokens(system + user) + 4096 + 256
+        ctx = max(self.num_ctx, needed)
+        return min(-(-ctx // 4096) * 4096, 65536)   # round up to 4k, hard cap
+
+    def _chat(self, system: str, user: str, json_mode: bool) -> str:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {
+                "temperature": SETTINGS.temperature,
+                "num_ctx": self._context_for(system, user),
+                "num_predict": SETTINGS.max_tokens,
+            },
+        }
+        if self.send_think:
+            payload["think"] = False
+        if json_mode:
+            payload["format"] = "json"
+        try:
+            data = _http_json(f"{self.base_url}/api/chat", payload, timeout=self.timeout)
+        except _HTTPStatusError as exc:
+            body = exc.body.lower()
+            if exc.status == 400 and "think" in body and self.send_think:
+                self.send_think = False        # model without a thinking switch
+                return self._chat(system, user, json_mode)
+            if exc.status == 404 or "not found" in body:
+                raise _FatalLLMError(
+                    f"The model '{self.model}' is not installed in Ollama. "
+                    f"Run:  ollama pull {self.model}   (or install_offline_model.bat)"
+                ) from exc
+            raise
+        except LLMError as exc:
+            if "Cannot reach" in str(exc):
+                raise _FatalLLMError(
+                    f"Ollama is not running at {self.base_url}. Start Ollama (or "
+                    "start.bat) and try again."
+                ) from exc
+            raise
+        return _strip_reasoning((data.get("message") or {}).get("content") or "")
+
+
+def ollama_status(base_url: str | None = None, timeout: float = 2.0) -> Dict[str, Any]:
+    """Report whether a local Ollama server is up and which models it has."""
+    url = (base_url or get_provider("ollama").resolved_base_url()).rstrip("/")
+    try:
+        version = _http_json(f"{url}/api/version", timeout=timeout).get("version", "")
+        tags = _http_json(f"{url}/api/tags", timeout=timeout).get("models", []) or []
+    except LLMError:
+        return {"running": False, "version": "", "models": [], "base_url": url}
+    models: List[Dict[str, Any]] = [
+        {"name": m.get("name", ""), "size_gb": round((m.get("size") or 0) / 1e9, 1)}
+        for m in tags if m.get("name")
+    ]
+    return {"running": True, "version": version, "models": models, "base_url": url}
+
+
+def build_llm_client(
+    provider: str | None,
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+) -> BaseLLMClient:
+    """Create the client for a preset in ``config.PROVIDERS``.
+
+    Empty arguments fall back to the preset / environment (``.env``) values.
+    """
+    from .config import default_provider_key
+
+    preset = get_provider(provider or default_provider_key())
+    model = (model or "").strip() or preset.resolved_model()
+    base_url = (base_url or "").strip() or preset.resolved_base_url()
+
+    if preset.kind == "mock":
+        return MockLLMClient()
+    if preset.kind == "ollama":
+        return OllamaLLMClient(base_url=base_url, model=model)
+    if preset.kind == "anthropic":
+        return AnthropicLLMClient(api_key=api_key or None, model=model or None)
+
+    key = (api_key or "").strip() or preset.env_api_key()
+    if not key:
+        raise LLMError(
+            f"No API key for {preset.label}. Put it in .env as {preset.key_env}=... "
+            "or paste it into the form."
+        )
+    if not base_url:
+        raise LLMError(f"Set the base URL for {preset.label} (e.g. CUSTOM_BASE_URL in .env).")
+    return OpenAICompatibleLLMClient(base_url, key, model, label=preset.label.split(" — ")[0])
+
+
+# ---------------------------------------------------------------------------
 # Offline deterministic mock
 # ---------------------------------------------------------------------------
 class MockLLMClient(BaseLLMClient):
@@ -123,6 +431,9 @@ class MockLLMClient(BaseLLMClient):
     full pipeline (scoring, ranking, report export) can be exercised without an
     API key or network. NOT a real evaluation - for testing/demo only.
     """
+
+    max_parallel = 4
+    description = "Demo mode (placeholder output, no AI)"
 
     def __init__(self, seed_salt: str = ""):
         self.seed_salt = seed_salt
@@ -149,6 +460,9 @@ class MockLLMClient(BaseLLMClient):
             return self._mock_synthesis()
         if "TASK: Write a concise FINAL RECOMMENDATION" in system:
             return self._mock_recommendation()
+        if "TASK: health check" in system:
+            return json.dumps({"ok": True, "reply": "سلام! حالت نمایشی آماده است."},
+                              ensure_ascii=False)
         return "خروجی آزمایشی (mock)."
 
     def _mock_scores(self, user: str) -> str:

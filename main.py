@@ -4,15 +4,18 @@ Command-line entry point for the Scientific Evaluation Agent.
 
 Examples
 --------
-# Real evaluation with Claude (needs ANTHROPIC_API_KEY):
-python main.py --challenge config/challenge_example.json \
-               --submissions examples/submissions \
-               --out output/report.docx
+# Real evaluation with the engine set in .env (LLM_PROVIDER, default: avalai):
+python main.py --challenge examples/mof_co2_capture/challenge.json \
+               --submissions examples/mof_co2_capture/submissions \
+               --out output/report
+
+# Fully offline with a local Ollama model:
+python main.py ... --provider ollama --model qwen3.5:9b
 
 # Offline demo with the deterministic mock backend (no API key needed):
 python main.py --challenge config/challenge_example.json \
                --submissions examples/submissions \
-               --out output/report.docx --mock
+               --out output/report --mock
 
 # Markdown report instead of Word:
 python main.py ... --format md --out output/report.md
@@ -25,15 +28,22 @@ import json
 import sys
 from pathlib import Path
 
-from scientific_evaluator import ScientificEvaluationAgent
-from scientific_evaluator.config import SETTINGS
-from scientific_evaluator.llm_client import AnthropicLLMClient, MockLLMClient
+try:  # API keys / provider choice live in .env
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:  # pragma: no cover
+    pass
+
+from scientific_evaluator import ScientificEvaluationAgent  # noqa: E402
+from scientific_evaluator.config import PROVIDERS, SETTINGS  # noqa: E402
+from scientific_evaluator.llm_client import build_llm_client  # noqa: E402
 
 
 def _build_llm(args):
-    if args.mock:
-        return MockLLMClient()
-    return AnthropicLLMClient(model=args.model)
+    provider = "mock" if args.mock else args.provider
+    return build_llm_client(
+        provider, api_key=args.api_key, model=args.model, base_url=args.base_url
+    )
 
 
 def main(argv=None) -> int:
@@ -52,8 +62,14 @@ def main(argv=None) -> int:
     parser.add_argument("--lang", default=None,
                         help="Report language, e.g. 'Persian' or 'English' "
                              "(defaults to config.SETTINGS.report_language).")
+    parser.add_argument("--provider", default=None, choices=list(PROVIDERS),
+                        help="AI engine (default: LLM_PROVIDER from .env, else avalai).")
     parser.add_argument("--model", default=None,
-                        help="LLM model id (defaults to config.SETTINGS.model).")
+                        help="Model id (defaults to the provider's model in .env).")
+    parser.add_argument("--api-key", default=None,
+                        help="API key (defaults to the provider's key in .env).")
+    parser.add_argument("--base-url", default=None,
+                        help="Override the API base URL (custom/OpenAI-compatible).")
     parser.add_argument("--mock", action="store_true",
                         help="Use the offline deterministic mock backend.")
     parser.add_argument("--json-out", default=None,
@@ -72,6 +88,8 @@ def main(argv=None) -> int:
 
     def progress(msg: str) -> None:
         print(f"  · {msg}", file=sys.stderr)
+
+    progress(f"Engine: {llm.description}")
 
     agent = ScientificEvaluationAgent(args.challenge, llm, progress=progress)
 

@@ -20,6 +20,7 @@ modules, so behavior can be tested and swapped independently.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, List, Optional, Union
 
@@ -94,6 +95,7 @@ class ScientificEvaluationAgent:
         evaluation.idea_improvements = self.improver.improve(
             self.challenge, submission, evaluation
         )
+        self._progress(f"Finished {submission.participant_id}")
         return evaluation
 
     def run(
@@ -106,7 +108,14 @@ class ScientificEvaluationAgent:
         if not submissions:
             raise ValueError("No submissions to evaluate.")
 
-        evaluations = [self.evaluate_submission(s) for s in submissions]
+        # Submissions are independent, so online backends evaluate several at
+        # once; a local model (max_parallel = 1) keeps them sequential.
+        workers = max(1, min(len(submissions), getattr(self.llm, "max_parallel", 1)))
+        if workers == 1:
+            evaluations = [self.evaluate_submission(s) for s in submissions]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                evaluations = list(pool.map(self.evaluate_submission, submissions))
 
         self._progress("Comparing and ranking submissions")
         comparison = self.comparator.compare(self.challenge, evaluations)

@@ -36,6 +36,10 @@ try:
 except Exception:  # pragma: no cover
     _HAS_SHAPING = False
 
+# matplotlib 3.11+ shapes and orders right-to-left text itself (libraqm).
+# Pre-shaping on top of that would reverse every Persian label.
+_MPL_NATIVE_RTL = _HAS_MPL and tuple(matplotlib.__version_info__[:2]) >= (3, 11)
+
 
 # A brand-neutral, colour-blind-friendly palette.
 _PALETTE = ["#2f6f9f", "#3f9f7f", "#c98a2b", "#9f5fa0", "#b04a4a", "#6f7f8f"]
@@ -52,11 +56,10 @@ def _register_persian_font() -> Optional[str]:
     """
     if not _HAS_MPL:
         return None
-    candidates: List[str] = []
+    from .fonts import persian_font_files
+
+    candidates: List[str] = [p for p in persian_font_files()[:1] if p]  # B Nazanin / Vazirmatn / Tahoma
     for pattern in (
-        "/usr/share/fonts/**/*[Nn]azanin*.ttf",   # real B Nazanin if present
-        "/usr/share/fonts/**/Vazirmatn-Regular.ttf",
-        "/usr/share/fonts/**/*[Vv]azir*.ttf",
         "/usr/share/fonts/**/*[Nn]oto*[Aa]rabic*.ttf",
         "/usr/share/fonts/**/*[Aa]miri*.ttf",
     ):
@@ -70,9 +73,24 @@ def _register_persian_font() -> Optional[str]:
     return None
 
 
+def _latin_fallback_families() -> List[str]:
+    """Latin font family names to fall back to for non-Persian glyphs."""
+    from .fonts import latin_font_files
+
+    families: List[str] = []
+    path = latin_font_files()[0]
+    if path:
+        try:
+            font_manager.fontManager.addfont(path)
+            families.append(font_manager.FontProperties(fname=path).get_name())
+        except Exception:
+            pass
+    return families + ["DejaVu Sans"]   # bundled with matplotlib
+
+
 def _shape(text: str) -> str:
     """Reshape + reorder Persian/Arabic text for correct RTL rendering."""
-    if _HAS_SHAPING and text:
+    if _HAS_SHAPING and text and not _MPL_NATIVE_RTL:
         try:
             return get_display(arabic_reshaper.reshape(text))
         except Exception:
@@ -89,7 +107,9 @@ def generate_charts(result: EvaluationResult, out_dir) -> List[Path]:
 
     family = _register_persian_font()
     if family:
-        matplotlib.rcParams["font.family"] = family
+        # Per-glyph fallback: some Persian fonts (e.g. Windows' B Nazanin) have
+        # no Latin letters, so English participant names need a second font.
+        matplotlib.rcParams["font.family"] = [family] + _latin_fallback_families()
     matplotlib.rcParams["axes.unicode_minus"] = False
 
     paths: List[Path] = []

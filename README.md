@@ -16,6 +16,60 @@ The final report is produced in **Persian (RTL)**, with **analytical tables and
 charts**, using **B Nazanin** for Persian and **Times New Roman** for English,
 and is exported as **both Word (`.docx`) and PDF**.
 
+It runs **locally** on Windows with a one-click launcher and a bilingual
+(Persian/English) web interface, against an **online API** (AvalAI, DeepSeek or
+any OpenAI-compatible endpoint) or **fully offline** with a local model through
+[Ollama](https://ollama.com).
+
+---
+
+## Run the demo on Windows
+
+| Step | What to do | Needs internet? |
+|---|---|---|
+| 1 | Double-click **`setup.bat`** (one time). It uses your Python 3.10+ if you have one, otherwise it downloads a private portable Python into `runtime\`, then installs the packages and creates `.env`. | yes (once) |
+| 2 | Put your API key in **`.env`** (see [AI engines](#ai-engines)). Skip this for offline-only use. | — |
+| 3 | *(Offline mode, optional)* Install Ollama, then double-click **`install_offline_model.bat`**. | yes (once) |
+| 4 | Double-click **`start.bat`**. The app opens in a clean window at `http://127.0.0.1:5000`. Keep the black console window open. | online engine only |
+
+In the app: **Load sample** → the bundled MOF/CO₂ challenge and its six sample
+answers are filled in → pick an engine → **Run evaluation**. Progress is shown
+live per answer; the results page has the ranking, a per-criterion heatmap, the
+integrated solution and download buttons for Word, PDF and JSON. Earlier runs
+are kept in `workspace\` and reopen instantly from the clock icon, which is useful
+when a long offline evaluation was run before the meeting.
+
+Options: `start.bat -Browser` opens a normal browser tab instead of the app
+window; `setup.bat -PipIndex https://<mirror>/simple` installs packages from a
+PyPI mirror when `pypi.org` is slow or blocked.
+
+## AI engines
+
+| Engine | `LLM_PROVIDER` | Cost | Notes |
+|---|---|---|---|
+| **AvalAI** (recommended online) | `avalai` | Pay in Toman; free starter credit on sign-up | Iranian gateway with an OpenAI-compatible API (`https://api.avalai.ir/v1`). Default model `deepseek-chat`. Sign up at <https://chat.avalai.ir/platform/home>, create a key and set `AVALAI_API_KEY`. |
+| DeepSeek official | `deepseek` | about $0.2 / $0.7 per million input/output tokens | `https://api.deepseek.com`, model `deepseek-chat`. Needs an international payment method. |
+| **Offline (Ollama)** | `ollama` | free | Runs on this computer, no internet. Default model `qwen3.5:9b` (good Persian, about 6.6 GB). Use `qwen3.5:4b` (about 3.4 GB) on smaller machines. |
+| Any OpenAI-compatible API | `custom` | — | Set `CUSTOM_BASE_URL`, `CUSTOM_API_KEY`, `CUSTOM_MODEL` (OpenRouter, LM Studio, vLLM, …). |
+| Anthropic Claude | `anthropic` | — | `ANTHROPIC_API_KEY` (not available in every region). |
+| Demo mode | `mock` | free | Placeholder text only, for checking the report layout. |
+
+A full evaluation of six answers costs well under one US dollar on DeepSeek V4
+models. With online engines up to `LLM_MAX_PARALLEL` (default 4) answers are
+evaluated at the same time, so a six-answer run takes a few minutes.
+
+**Offline mode.** Install Ollama for Windows
+(<https://ollama.com/download/windows>, mirror:
+<https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe>, about
+1.7 GB), then run `install_offline_model.bat` (or `-Model qwen3.5:4b`). If the
+Ollama model registry is unreachable, download a GGUF file of the model elsewhere
+and import it with `install_offline_model.bat -Gguf D:\path\model.gguf -Model my-model`.
+Models are large: set the `OLLAMA_MODELS` environment variable to put them on
+another drive. Local models evaluate one answer at a time and are much slower
+than an online API (on a laptop GPU, plan on several minutes per answer), so
+for a live demo either use 2–3 answers or run the evaluation beforehand and
+reopen it from the history.
+
 ---
 
 ## Table of contents
@@ -108,7 +162,7 @@ always identical.
 | Challenge input | `challenge.py` | Load/validate a challenge (any domain) from JSON/dict |
 | Word document reader | `document_reader.py` | Read `.docx` paragraphs **and** tables into raw text |
 | Text preprocessing | `preprocessing.py` | Clean/normalize text, detect title, cap length → `Submission` |
-| LLM client | `llm_client.py` | Swappable backend (`Anthropic` real / `Mock` offline, Persian) + robust JSON parsing |
+| LLM client | `llm_client.py` | Swappable backends: OpenAI-compatible (AvalAI, DeepSeek, …), Ollama (offline), Anthropic, Mock; retries, JSON mode + repair |
 | Prompts | `prompts.py` | Auditable prompt templates; language directive pins output to Persian |
 | Evaluation engine | `evaluation_engine.py` | Score one submission 0-10 per criterion with justifications |
 | Scoring engine | `scoring_engine.py` | Weighted-rubric math → `/100`, clamping, integrity penalty |
@@ -124,7 +178,7 @@ always identical.
 | English report (optional) | `report_generator.py` | Original English Word/Markdown renderer |
 | Orchestrator | `agent.py` | Wire the pipeline together (`ScientificEvaluationAgent`) |
 | Data models | `models.py` | Typed dataclasses passed between modules |
-| Config | `config.py` | Rubric (weights + Persian names) + settings (language, fonts) |
+| Config | `config.py` | Rubric (weights + Persian names) + settings (language, fonts) + LLM provider presets |
 
 **What makes it "scientific", not generic text comparison:** a skeptical
 peer-reviewer persona; evidence-anchored scoring with calibrated anchors;
@@ -163,6 +217,9 @@ editing `config.RUBRIC`.
 
 ## 5. Quick start
 
+On Windows, use `setup.bat` / `start.bat` (see [Run the demo on Windows](#run-the-demo-on-windows)).
+On Linux / macOS:
+
 ```bash
 # 1. System libraries for the PDF engine (weasyprint) + a Persian font
 sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
@@ -170,33 +227,39 @@ sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
 # (Optional, for exact fonts) install "B Nazanin" and "Times New Roman",
 # or drop "B Nazanin.ttf" into ./fonts/
 
-# 2. Python dependencies
+# 2. Python dependencies + configuration
 pip install -r requirements.txt
+cp .env.example .env        # then put your API key in .env
 ```
 
 ### Option A — Graphical interface (easiest)
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...    # or paste the key into the form
-python gui.py                          # opens http://127.0.0.1:5000
+python gui.py                # opens http://127.0.0.1:5000
+python gui.py --app-window   # same, in a chromeless Edge/Chrome window
 ```
 
-A browser window opens with a three-step page:
+The page (Persian or English, light or dark) has four steps:
 
 1. **Define the challenge** — title, field, background, objectives, constraints,
-   expected outputs, reviewer notes (a **Load example** button fills the form).
+   expected outputs, reviewer notes. **Load sample** fills the form with a bundled
+   challenge and attaches its sample answers.
 2. **Upload the answers** — drag & drop or pick multiple `.docx` files. The file
    name becomes the participant's name in the report; **Persian file names work**.
-3. **Output options** — report language (Persian/English), format (Word + PDF),
-   model, API key, and an **Offline demo** checkbox to preview the layout with no
-   API key.
+3. **AI engine** — online API (provider, model, key; keys from `.env` are used
+   automatically), offline Ollama (shows whether the server and model are ready)
+   or demo mode. **Test connection** sends a one-line request.
+4. **Report output** — language (Persian/English) and format (Word + PDF).
 
-Press **Run evaluation**; a live progress log streams while it works, then the
-ranking table and **download buttons** for `report.docx`, `report.pdf` and
-`result.json` appear. **Clear files from server** deletes the uploads and
-reports when you are done.
+Press **Run evaluation**: a progress bar and a per-answer stage list update
+live, then the results page shows the ranking, the top answer, a criteria
+heatmap, the integrated solution / recommendation / comparison, and **download
+buttons** for `report.docx`, `report.pdf` and `result.json`. Past runs are kept
+in `./workspace` (clock icon). **Delete this evaluation's files** removes the
+uploads and reports.
 
-Useful flags: `python gui.py --port 8080`, `--no-browser`, `--work-dir ./jobs`.
+Useful flags: `python gui.py --port 8080` (the next free port is used if it is
+busy), `--no-browser`, `--work-dir ./jobs`.
 The server binds to `127.0.0.1` (this machine only) and has **no
 authentication** — only use `--host 0.0.0.0` on a network you trust.
 
@@ -212,12 +275,14 @@ python main.py \
   --submissions examples/submissions \
   --out output/report --format both --mock
 
-# Real evaluation with Claude
-export ANTHROPIC_API_KEY=sk-ant-...
+# Real evaluation with the engine from .env (default: AvalAI + DeepSeek)
 python main.py \
-  --challenge config/challenge_example.json \
-  --submissions examples/submissions \
+  --challenge examples/mof_co2_capture/challenge.json \
+  --submissions examples/mof_co2_capture/submissions \
   --out output/report --format both
+
+# Fully offline with a local model
+python main.py ... --provider ollama --model qwen3.5:9b
 ```
 
 Outputs: `output/report.docx` **and** `output/report.pdf` (Persian, RTL).
@@ -228,10 +293,10 @@ switches to the English Word/Markdown renderer.
 
 ```python
 from scientific_evaluator import ScientificEvaluationAgent
-from scientific_evaluator.llm_client import AnthropicLLMClient
+from scientific_evaluator.llm_client import build_llm_client
 
 agent = ScientificEvaluationAgent("config/challenge_example.json",
-                                  AnthropicLLMClient())
+                                  build_llm_client("avalai"))  # or "ollama", "deepseek", ...
 result = agent.run("path/to/submissions")            # folder of existing .docx
 files = agent.export_report(result, "output/report", fmt="both")  # .docx + .pdf
 for e in result.ranked_evaluations():
@@ -277,19 +342,25 @@ for e in result.ranked_evaluations():
 
 | Library | Purpose |
 |---|---|
-| `anthropic` | LLM calls (Claude) for evaluation, improvement, comparison, synthesis |
+| *(standard library)* | OpenAI-compatible and Ollama API calls (`urllib`) |
+| `anthropic` | Optional Claude backend |
+| `flask` | Local web GUI |
 | `python-docx` | Read participant `.docx` **and** write the Word report |
-| `weasyprint` | Render the Persian RTL **PDF** (HTML→PDF, embeds fonts) |
+| `weasyprint` | Render the Persian RTL **PDF** on Linux/macOS (HTML→PDF, embeds fonts) |
 | `matplotlib` | Analytical charts (bar + heatmap) |
 | `arabic_reshaper`, `python-bidi` | Correct Persian shaping in chart labels |
-| `pandas`, `rich`, `python-dotenv` | Optional (tables / CLI polish / `.env`) |
+| `python-dotenv` | Reads API keys and the engine choice from `.env` |
 
-**System libraries** (for weasyprint): `libpango-1.0-0`, `libpangocairo-1.0-0`,
-`libcairo2`, `libgdk-pixbuf-2.0-0`.
-**Fonts:** a Persian font (**B Nazanin** if available, otherwise **Vazirmatn**)
-and a serif Latin font (**Times New Roman**, or the metric-identical
-**Liberation Serif**). Only `anthropic` + `python-docx` are needed for a Word-only
-run; the mock backend and tests need no network or API key.
+**PDF engine.** On Linux/macOS weasyprint needs `libpango-1.0-0`,
+`libpangocairo-1.0-0`, `libcairo2`, `libgdk-pixbuf-2.0-0`. On Windows (or when
+weasyprint is unavailable) the same HTML is printed by a headless **Microsoft
+Edge or Google Chrome**, so nothing extra is installed; `PDF_BROWSER` can point
+to a specific browser executable.
+**Fonts:** a Persian font (**B Nazanin** if available, otherwise **Vazirmatn**,
+or Tahoma on Windows) and a serif Latin font (**Times New Roman**, or the
+metric-identical **Liberation Serif**). Fonts installed per user on Windows
+(`%LOCALAPPDATA%\Microsoft\Windows\Fonts`) are found too. The mock backend and
+the tests need no network or API key.
 
 ---
 
@@ -299,14 +370,22 @@ run; the mock backend and tests need no network or API key.
 test_ai/
 ├── README.md
 ├── requirements.txt
+├── .env.example                # engine choice + API keys (copied to .env by setup)
+├── setup.bat                   # Windows: one-time setup (Python, packages, .env)
+├── start.bat                   # Windows: start the demo (+ local Ollama if installed)
+├── install_offline_model.bat   # Windows: download/import the offline model
+├── scripts/                    #   PowerShell behind the .bat files
 ├── gui.py                      # launcher for the web GUI
 ├── webapp/                     # Flask GUI (define challenge, upload, download)
-│   ├── app.py                  #   routes + upload handling (unicode-safe names)
-│   ├── jobs.py                 #   background job runner + progress log
-│   └── templates/index.html    #   single-page UI
-├── main.py                     # CLI (--format both|docx|pdf|md, --lang, --mock)
+│   ├── app.py                  #   routes: engines, test, packs, evaluate, runs
+│   ├── jobs.py                 #   background job runner, progress, saved history
+│   ├── templates/index.html    #   single-page UI (Persian/English)
+│   └── static/                 #   CSS, JS and the Vazirmatn font (works offline)
+├── main.py                     # CLI (--provider, --model, --format, --lang, --mock)
 ├── config/challenge_example.json
 ├── fonts/                      # (optional) drop "B Nazanin.ttf" here for exact PDF fonts
+├── examples/mof_co2_capture/   # demo pack: challenge.json + 6 real answers
+├── examples/submissions/       # crop-water-stress sample answers
 ├── examples/generate_sample_submissions.py   # makes demo EXISTING .docx
 ├── scientific_evaluator/
 │   ├── config.py               # rubric (weights + Persian names) + settings
@@ -314,7 +393,7 @@ test_ai/
 │   ├── challenge.py            # challenge input
 │   ├── document_reader.py      # Word reader
 │   ├── preprocessing.py        # text cleaning
-│   ├── llm_client.py           # Anthropic + Mock backends, JSON extraction
+│   ├── llm_client.py           # OpenAI-compatible, Ollama, Anthropic, Mock backends
 │   ├── prompts.py              # all prompt templates (Persian-directed)
 │   ├── evaluation_engine.py    # per-criterion scoring
 │   ├── scoring_engine.py       # weighted-rubric math
@@ -331,13 +410,14 @@ test_ai/
 │   └── agent.py                # orchestrator
 └── tests/
     ├── test_scoring.py         # rubric, scoring math, pipeline, docx/pdf export
+    ├── test_llm_clients.py     # OpenAI-compatible + Ollama clients (local fake server)
     └── test_webapp.py          # GUI flow: upload → job → download
 ```
 
 Run the tests (no API key or network needed):
 
 ```bash
-python tests/test_scoring.py && python tests/test_webapp.py
+python tests/test_scoring.py && python tests/test_llm_clients.py && python tests/test_webapp.py
 ```
 
 **Scoring math:** `total = clamp(Σ (raw/10 × weight) − penalty, 0, 100)`.
@@ -406,15 +486,19 @@ in the PDF.
 - **Offline mock** produces hash-based placeholder scores (Persian text) so the
   pipeline runs without an API key; its rankings are meaningless — use a real
   backend for genuine evaluation.
-- **PDF engine.** The PDF is produced by weasyprint (self-contained). A
-  LibreOffice `.docx`→PDF helper (`persian_report.convert_docx_to_pdf_libreoffice`)
-  is also included for environments where LibreOffice is available and the exact
-  B Nazanin font is installed.
+- **PDF engine.** The PDF is produced by weasyprint, or by headless Edge/Chrome
+  when weasyprint is unavailable (Windows). A LibreOffice `.docx`→PDF helper
+  (`persian_report.convert_docx_to_pdf_libreoffice`) is also included for
+  environments where LibreOffice is available and the exact B Nazanin font is
+  installed.
+- **Data privacy.** With an online engine the answer text is sent to that API
+  provider. With the offline engine nothing leaves the computer.
 - **B Nazanin** is not redistributable here, so it is not committed; the Word file
   names it and the PDF falls back to Vazirmatn unless you supply `B Nazanin.ttf`.
 - Very long submissions are truncated (head+tail) to `SETTINGS.max_submission_chars`;
   raise it or add chunking for long documents.
 - **The GUI is a local single-user tool.** It has no authentication, runs one
   evaluation at a time (the agent mutates process-wide settings), and stores
-  uploads/reports in a temp directory until you press “Clear”. Do not expose it
-  to an untrusted network.
+  uploads/reports in `./workspace` until you delete them. API keys typed into
+  the form are used for that run only and never written to disk. Do not expose
+  it to an untrusted network.

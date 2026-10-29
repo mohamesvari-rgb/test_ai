@@ -13,9 +13,13 @@ env/
 .env
 *.key
 
-# Generated outputs
+# Portable Python downloaded by setup.bat
+runtime/
+
+# Generated outputs (workspace = GUI uploads, reports and run history)
 output/
 reports/
+workspace/
 *.docx
 !examples/**/*.docx
 *.pdf

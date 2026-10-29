@@ -17,35 +17,57 @@ Requirement: Persian = "B Nazanin", Latin/English = "Times New Roman".
 from __future__ import annotations
 
 import glob
+import os
+import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 # Extra directory (committed to the repo) where a user can drop real font files
 # such as "B Nazanin.ttf" to get exact fonts in the PDF.
 _REPO_FONTS = Path(__file__).resolve().parent.parent / "fonts"
 
+# Windows keeps per-user fonts (where installers such as the B-font pack put
+# "BNazanin.ttf") separately from the system fonts folder.
+_WIN_FONT_DIRS: List[Path] = []
+if sys.platform.startswith("win"):
+    if os.environ.get("LOCALAPPDATA"):
+        _WIN_FONT_DIRS.append(Path(os.environ["LOCALAPPDATA"]) / "Microsoft" / "Windows" / "Fonts")
+    _WIN_FONT_DIRS.append(Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts")
+
+
+def _win(*names: str) -> List[str]:
+    return [str(d / n) for n in names for d in _WIN_FONT_DIRS]
+
+
 _PERSIAN_REGULAR_PATTERNS = [
     str(_REPO_FONTS / "*[Nn]azanin*.ttf"),
     "/usr/share/fonts/**/*[Bb] *[Nn]azanin*.ttf",
     "/usr/share/fonts/**/*[Nn]azanin*.ttf",
+    *_win("*Nazanin*.ttf"),
     str(_REPO_FONTS / "*[Vv]azir*.ttf"),
     "/usr/share/fonts/**/Vazirmatn-Regular.ttf",
     "/usr/share/fonts/**/*[Vv]azir*[Rr]egular*.ttf",
+    *_win("Vazirmatn-Regular.ttf", "*Vazir*.ttf"),
+    *_win("tahoma.ttf"),             # always present on Windows; has Persian glyphs
 ]
 _PERSIAN_BOLD_PATTERNS = [
     str(_REPO_FONTS / "*[Nn]azanin*[Bb]old*.ttf"),
     "/usr/share/fonts/**/*[Nn]azanin*[Bb]old*.ttf",
+    *_win("*Nazanin*Bold*.ttf", "*Nazanin*Bd*.ttf"),
     str(_REPO_FONTS / "*[Vv]azir*[Bb]old*.ttf"),
     "/usr/share/fonts/**/Vazirmatn-Bold.ttf",
+    *_win("Vazirmatn-Bold.ttf"),
 ]
 _LATIN_REGULAR_PATTERNS = [
     "/usr/share/fonts/**/[Tt]imes*[Nn]ew*[Rr]oman*.ttf",
     "/usr/share/fonts/**/[Tt]imes*.ttf",
+    *_win("times.ttf"),
     "/usr/share/fonts/**/LiberationSerif-Regular.ttf",
     "/usr/share/fonts/**/*[Ss]erif*[Rr]egular*.ttf",
 ]
 _LATIN_BOLD_PATTERNS = [
     "/usr/share/fonts/**/[Tt]imes*[Bb]old*.ttf",
+    *_win("timesbd.ttf"),
     "/usr/share/fonts/**/LiberationSerif-Bold.ttf",
     "/usr/share/fonts/**/*[Ss]erif*[Bb]old*.ttf",
 ]

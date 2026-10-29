@@ -231,15 +231,16 @@ def test_pdf_error_message_is_actionable():
 
 
 def test_persian_report_export_pdf():
-    """PDF export via weasyprint (skipped if weasyprint is unavailable)."""
+    """PDF export via weasyprint or headless Edge/Chrome (skipped if neither)."""
+    from scientific_evaluator.pdf_report import find_chromium, render_blocks_to_pdf
     try:
         import weasyprint  # noqa: F401
     except Exception:
-        print("SKIP test_persian_report_export_pdf (weasyprint not installed)")
-        return
+        if not find_chromium():
+            print("SKIP test_persian_report_export_pdf (no PDF engine available)")
+            return
     import tempfile
     from scientific_evaluator import charts as charts_mod
-    from scientific_evaluator.pdf_report import render_blocks_to_pdf
     from scientific_evaluator.report_builder import build_report_blocks
 
     _agent, result, _subs = _demo_result(3)

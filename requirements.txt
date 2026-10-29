@@ -1,15 +1,21 @@
-# Core LLM SDK
+# Online / offline LLM access is done with the standard library (urllib):
+#   * any OpenAI-compatible API (AvalAI, DeepSeek, OpenRouter, LM Studio, ...)
+#   * a local Ollama server (offline mode)
+# The Anthropic SDK is only needed for the optional Claude backend.
 anthropic>=0.40.0
 
-# Web GUI (python gui.py)
+# Web GUI (python gui.py); waitress serves it (falls back to Flask's own server)
 flask>=3.0.0
+waitress>=3.0.0
 
 # Word document reading & writing
 python-docx>=1.1.0
 
-# Persian (RTL) PDF rendering (HTML -> PDF). Needs system libs:
+# Persian (RTL) PDF rendering (HTML -> PDF) on Linux/macOS. Needs system libs:
 #   libpango-1.0-0, libpangocairo-1.0-0, libcairo2, libgdk-pixbuf-2.0-0
-weasyprint>=60.0
+# On Windows the PDF is printed with the built-in Microsoft Edge (or Chrome)
+# instead, so weasyprint and its GTK runtime are not needed there.
+weasyprint>=60.0; sys_platform != "win32"
 
 # Charts for the analytical report
 matplotlib>=3.7.0
@@ -18,15 +24,10 @@ matplotlib>=3.7.0
 arabic_reshaper>=3.0.0
 python-bidi>=0.4.2
 
-# Data handling / tables
-pandas>=2.0.0
-
-# Optional: nicer console output for the CLI
-rich>=13.0.0
-
-# Optional: .env support for API keys
+# Reads API keys and the provider choice from .env
 python-dotenv>=1.0.0
 
-# Note: a Persian font ("B Nazanin" if you have it, otherwise Vazirmatn) and a
-# serif Latin font (Times New Roman / Liberation Serif) must be installed for
-# the PDF to embed them. Drop a "B Nazanin.ttf" into ./fonts to use it exactly.
+# Note: a Persian font ("B Nazanin" if you have it, otherwise Vazirmatn or
+# Tahoma) and a serif Latin font (Times New Roman / Liberation Serif) must be
+# installed for the PDF to embed them. Drop a "B Nazanin.ttf" into ./fonts to
+# use it exactly.

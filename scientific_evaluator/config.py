@@ -8,8 +8,9 @@ here so the rubric can be audited and tuned in one place.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +202,13 @@ RUBRIC: List[RubricCriterion] = [
 # ---------------------------------------------------------------------------
 # Global settings
 # ---------------------------------------------------------------------------
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, "") or default))
+    except ValueError:
+        return default
+
+
 @dataclass
 class Settings:
     """Runtime settings for the agent."""
@@ -211,7 +219,13 @@ class Settings:
     model: str = "claude-opus-5"
     # Lower temperature -> more consistent, repeatable scoring.
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 8192
+    # Submissions evaluated concurrently with online APIs. Local (Ollama)
+    # models always run one request at a time.
+    max_parallel: int = field(default_factory=lambda: _env_int("LLM_MAX_PARALLEL", 4))
+    # Context window (tokens) requested from a local Ollama model. Raised
+    # automatically for a single request whose prompt would not fit.
+    ollama_num_ctx: int = field(default_factory=lambda: _env_int("OLLAMA_NUM_CTX", 24576))
     # Max characters of submission text sent to the LLM per call (safety cap).
     max_submission_chars: int = 60_000
     # Number of retries on transient LLM errors.
@@ -230,6 +244,133 @@ class Settings:
 
 
 SETTINGS = Settings()
+
+
+# ---------------------------------------------------------------------------
+# LLM providers
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ProviderPreset:
+    """A ready-made LLM backend the user can pick in the GUI or CLI.
+
+    ``kind`` selects the client implementation:
+      * ``openai``    - any OpenAI-compatible chat-completions API
+      * ``ollama``    - a local Ollama server (offline)
+      * ``anthropic`` - Claude via the Anthropic SDK
+      * ``mock``      - deterministic offline placeholder output
+
+    Base URL and model can be overridden with ``<KEY>_BASE_URL`` /
+    ``<KEY>_MODEL`` environment variables (e.g. ``AVALAI_MODEL``).
+    """
+
+    key: str
+    label: str
+    label_fa: str
+    kind: str
+    base_url: str = ""
+    model: str = ""
+    key_env: str = ""          # env var with the API key ("" = no key needed)
+    offline: bool = False
+    signup_url: str = ""
+    models: tuple = ()         # suggestions shown in the GUI
+    note: str = ""
+    note_fa: str = ""
+
+    @property
+    def needs_key(self) -> bool:
+        return bool(self.key_env)
+
+    def resolved_base_url(self) -> str:
+        return os.environ.get(f"{self.key.upper()}_BASE_URL", "").strip() or self.base_url
+
+    def resolved_model(self) -> str:
+        if self.kind == "anthropic":
+            return os.environ.get("ANTHROPIC_MODEL", "").strip() or SETTINGS.model
+        return os.environ.get(f"{self.key.upper()}_MODEL", "").strip() or self.model
+
+    def env_api_key(self) -> str:
+        return os.environ.get(self.key_env, "").strip() if self.key_env else ""
+
+
+PROVIDERS: Dict[str, ProviderPreset] = {p.key: p for p in [
+    ProviderPreset(
+        key="avalai",
+        label="AvalAI — Iranian API gateway (pay in Toman)",
+        label_fa="اول‌ای‌آی (AvalAI) — درگاه ایرانی، پرداخت ریالی",
+        kind="openai",
+        base_url="https://api.avalai.ir/v1",
+        model="deepseek-chat",
+        key_env="AVALAI_API_KEY",
+        signup_url="https://chat.avalai.ir/platform/home",
+        models=("deepseek-chat", "deepseek-v4.1-flash", "deepseek-reasoner"),
+        note="OpenAI-compatible; free starter credit on sign-up.",
+        note_fa="سازگار با OpenAI؛ اعتبار رایگان اولیه پس از ثبت‌نام.",
+    ),
+    ProviderPreset(
+        key="deepseek",
+        label="DeepSeek — official API",
+        label_fa="DeepSeek — API رسمی",
+        kind="openai",
+        base_url="https://api.deepseek.com",
+        model="deepseek-chat",
+        key_env="DEEPSEEK_API_KEY",
+        signup_url="https://platform.deepseek.com",
+        models=("deepseek-chat", "deepseek-reasoner"),
+    ),
+    ProviderPreset(
+        key="ollama",
+        label="Offline — Ollama on this computer",
+        label_fa="آفلاین — Ollama روی همین رایانه",
+        kind="ollama",
+        base_url="http://127.0.0.1:11434",
+        model="qwen3.5:9b",
+        offline=True,
+        signup_url="https://ollama.com/download/windows",
+        models=("qwen3.5:9b", "qwen3.5:4b", "gemma3:12b"),
+        note="No internet needed; slower than online APIs.",
+        note_fa="بدون نیاز به اینترنت؛ کندتر از API آنلاین.",
+    ),
+    ProviderPreset(
+        key="custom",
+        label="Other OpenAI-compatible API",
+        label_fa="سایر APIهای سازگار با OpenAI",
+        kind="openai",
+        key_env="CUSTOM_API_KEY",
+        note="OpenRouter, LM Studio, vLLM, other gateways…",
+        note_fa="OpenRouter، LM Studio، vLLM و سایر درگاه‌ها",
+    ),
+    ProviderPreset(
+        key="anthropic",
+        label="Anthropic Claude",
+        label_fa="Anthropic Claude",
+        kind="anthropic",
+        key_env="ANTHROPIC_API_KEY",
+        signup_url="https://console.anthropic.com",
+    ),
+    ProviderPreset(
+        key="mock",
+        label="Demo mode — placeholder output (no AI)",
+        label_fa="حالت نمایشی — خروجی نمونه (بدون هوش مصنوعی)",
+        kind="mock",
+        offline=True,
+    ),
+]}
+
+
+def get_provider(key: Optional[str]) -> ProviderPreset:
+    """Return the preset for ``key`` (case-insensitive); raise if unknown."""
+    preset = PROVIDERS.get((key or "").strip().lower())
+    if preset is None:
+        raise ValueError(
+            f"Unknown LLM provider {key!r}. Choose one of: {', '.join(PROVIDERS)}"
+        )
+    return preset
+
+
+def default_provider_key() -> str:
+    """Provider chosen by ``LLM_PROVIDER`` (default: avalai)."""
+    key = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    return key if key in PROVIDERS else "avalai"
 
 
 # ---------------------------------------------------------------------------
