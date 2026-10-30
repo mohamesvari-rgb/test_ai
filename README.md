@@ -32,9 +32,10 @@ any OpenAI-compatible endpoint) or **fully offline** with a local model through
 | 3 | *(Offline mode, optional)* Install Ollama, then double-click **`install_offline_model.bat`**. | yes (once) |
 | 4 | Double-click **`start.bat`**. The app opens in a clean window at `http://127.0.0.1:5000`. Keep the black console window open. | online engine only |
 
-In the app: **Load sample** → the bundled MOF/CO₂ challenge and its six sample
-answers are filled in → pick an engine → **Run evaluation**. Progress is shown
-live per answer; the results page has the ranking, a per-criterion heatmap, the
+In the app: describe the challenge → upload the `.docx` answers → choose
+**Online** (API key) or **Offline** → **Start evaluation**. The online provider and
+model are set in `.env`. Progress is shown live per answer; the results page
+has the ranking, a per-criterion heatmap, the
 integrated solution and download buttons for Word, PDF and JSON. Earlier runs
 are kept in `workspace\` and reopen instantly from the clock icon, which is useful
 when a long offline evaluation was run before the meeting.
@@ -61,11 +62,13 @@ evaluated at the same time, so a six-answer run takes a few minutes.
 **Offline mode.** Install Ollama for Windows
 (<https://ollama.com/download/windows>, mirror:
 <https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe>, about
-1.7 GB), then run `install_offline_model.bat` (or `-Model qwen3.5:4b`). If the
+1.7 GB), run `install_offline_model.bat` (or `-Model qwen3.5:4b`), then choose
+**Offline** in the AI engine section. `LLM_PROVIDER=ollama` in `.env` makes it the
+default. If the
 Ollama model registry is unreachable, download a GGUF file of the model elsewhere
 and import it with `install_offline_model.bat -Gguf D:\path\model.gguf -Model my-model`.
-Models are large: set the `OLLAMA_MODELS` environment variable to put them on
-another drive. Local models evaluate one answer at a time and are much slower
+Models are large: change **Model location** in the Ollama app's Settings to put
+them on another drive (the app overrides the `OLLAMA_MODELS` variable). Local models evaluate one answer at a time and are much slower
 than an online API (on a laptop GPU, plan on several minutes per answer), so
 for a live demo either use 2–3 answers or run the evaluation beforehand and
 reopen it from the history.
@@ -242,16 +245,16 @@ python gui.py --app-window   # same, in a chromeless Edge/Chrome window
 The page (Persian or English, light or dark) has four steps:
 
 1. **Define the challenge** — title, field, background, objectives, constraints,
-   expected outputs, reviewer notes. **Load sample** fills the form with a bundled
-   challenge and attaches its sample answers.
+   expected outputs, reviewer notes.
 2. **Upload the answers** — drag & drop or pick multiple `.docx` files. The file
    name becomes the participant's name in the report; **Persian file names work**.
-3. **AI engine** — online API (provider, model, key; keys from `.env` are used
-   automatically), offline Ollama (shows whether the server and model are ready)
-   or demo mode. **Test connection** sends a one-line request.
+3. **AI engine** — **Online** asks only for the API key (a key in `.env` is used
+   automatically; a key typed here applies to that run). **Offline** uses the local
+   Ollama model and shows whether it is ready. Provider and models come from `.env`;
+   the section is hidden in demo mode (`LLM_PROVIDER=mock`).
 4. **Report output** — language (Persian/English) and format (Word + PDF).
 
-Press **Run evaluation**: a progress bar and a per-answer stage list update
+Press **Start evaluation**: a progress bar and a per-answer stage list update
 live, then the results page shows the ranking, the top answer, a criteria
 heatmap, the integrated solution / recommendation / comparison, and **download
 buttons** for `report.docx`, `report.pdf` and `result.json`. Past runs are kept
@@ -377,14 +380,14 @@ test_ai/
 ├── scripts/                    #   PowerShell behind the .bat files
 ├── gui.py                      # launcher for the web GUI
 ├── webapp/                     # Flask GUI (define challenge, upload, download)
-│   ├── app.py                  #   routes: engines, test, packs, evaluate, runs
+│   ├── app.py                  #   routes: engine, evaluate, status, runs, download
 │   ├── jobs.py                 #   background job runner, progress, saved history
 │   ├── templates/index.html    #   single-page UI (Persian/English)
 │   └── static/                 #   CSS, JS and the Vazirmatn font (works offline)
 ├── main.py                     # CLI (--provider, --model, --format, --lang, --mock)
 ├── config/challenge_example.json
 ├── fonts/                      # (optional) drop "B Nazanin.ttf" here for exact PDF fonts
-├── examples/mof_co2_capture/   # demo pack: challenge.json + 6 real answers
+├── examples/mof_co2_capture/   # sample challenge.json + 4 answers (CLI and tests)
 ├── examples/submissions/       # crop-water-stress sample answers
 ├── examples/generate_sample_submissions.py   # makes demo EXISTING .docx
 ├── scientific_evaluator/

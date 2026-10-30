@@ -76,6 +76,9 @@ def main(argv=None) -> int:
                         help="Optional path to also dump the raw result as JSON.")
     args = parser.parse_args(argv)
 
+    # Persian participant names must not crash a legacy Windows console codepage.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     if args.lang:
         SETTINGS.report_language = args.lang
     fmt = args.format

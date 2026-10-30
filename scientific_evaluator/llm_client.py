@@ -54,6 +54,9 @@ class _HTTPStatusError(LLMError):
 # Statuses worth retrying (rate limit / overloaded / gateway hiccups).
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
 
+# Ceiling when a cut-off online reply is retried with a larger output limit.
+_MAX_ONLINE_TOKENS = 96000
+
 
 def _strip_reasoning(text: str) -> str:
     """Drop ``<think>...</think>`` blocks that reasoning models prepend."""
@@ -208,7 +211,13 @@ class _ChatAPIClient(BaseLLMClient):
         raise LLMError(f"{self.description or 'LLM'} call failed after retries: {last_err}")
 
     def complete_text(self, system: str, user: str) -> str:
-        return self._with_retries(lambda: self._chat(system, user, json_mode=False))
+        def call() -> str:
+            text = self._chat(system, user, json_mode=False)
+            if not text:   # never let an empty answer pass as a finished section
+                raise LLMError("the model returned an empty reply")
+            return text
+
+        return self._with_retries(call)
 
     def complete_json(self, system: str, user: str) -> Dict[str, Any]:
         text = self._with_retries(lambda: self._chat(system, user, json_mode=True))
@@ -237,7 +246,7 @@ class OpenAICompatibleLLMClient(_ChatAPIClient):
         base_url: str,
         api_key: str | None,
         model: str,
-        timeout: float = 300,
+        timeout: float = 600,    # a long reasoning reply can take several minutes
         label: str = "",
     ):
         if not base_url:
@@ -249,6 +258,7 @@ class OpenAICompatibleLLMClient(_ChatAPIClient):
         self.model = model
         self.timeout = timeout
         self.json_mode_supported = True
+        self.max_tokens = SETTINGS.online_max_tokens
         self.max_parallel = SETTINGS.max_parallel
         self.description = f"{label or self.base_url} · {model}"
 
@@ -260,7 +270,7 @@ class OpenAICompatibleLLMClient(_ChatAPIClient):
                 {"role": "user", "content": user},
             ],
             "temperature": SETTINGS.temperature,
-            "max_tokens": SETTINGS.max_tokens,
+            "max_tokens": self.max_tokens,
         }
         if json_mode and self.json_mode_supported:
             payload["response_format"] = {"type": "json_object"}
@@ -282,9 +292,14 @@ class OpenAICompatibleLLMClient(_ChatAPIClient):
                 return self._chat(system, user, json_mode)
             raise
         try:
-            message = data["choices"][0]["message"]
+            choice = data["choices"][0]
+            message = choice["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"Unexpected reply from {self.base_url}: {str(data)[:400]}") from exc
+        # A cut-off reply cannot be fixed by asking again with the same limit.
+        if choice.get("finish_reason") == "length" and self.max_tokens < _MAX_ONLINE_TOKENS:
+            self.max_tokens = min(self.max_tokens * 2, _MAX_ONLINE_TOKENS)
+            return self._chat(system, user, json_mode)
         return _strip_reasoning(message.get("content") or "")
 
 
@@ -337,7 +352,9 @@ class OllamaLLMClient(_ChatAPIClient):
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "keep_alive": "30m",
+            # A loaded model grows the Windows page file by several GB on C:, so
+            # release it soon after the last request.
+            "keep_alive": "5m",
             "options": {
                 "temperature": SETTINGS.temperature,
                 "num_ctx": self._context_for(system, user),
@@ -460,9 +477,6 @@ class MockLLMClient(BaseLLMClient):
             return self._mock_synthesis()
         if "TASK: Write a concise FINAL RECOMMENDATION" in system:
             return self._mock_recommendation()
-        if "TASK: health check" in system:
-            return json.dumps({"ok": True, "reply": "سلام! حالت نمایشی آماده است."},
-                              ensure_ascii=False)
         return "خروجی آزمایشی (mock)."
 
     def _mock_scores(self, user: str) -> str:

@@ -4,10 +4,7 @@ Flask application for the Scientific Evaluation Agent GUI.
 Routes
 ------
 GET  /                       the single-page UI
-GET  /api/engines            available AI engines + their readiness (keys, Ollama)
-POST /api/test-engine        send a tiny request to the chosen engine
-GET  /api/demo-packs         bundled sample challenges + answers
-GET  /api/example-challenge  load a bundled challenge into the form (?pack=<id>)
+GET  /api/engine             the configured AI engine and whether it needs a key
 POST /api/evaluate           accept the challenge + uploaded .docx, start a job
 GET  /api/status/<job_id>    poll progress / results
 GET  /api/runs               recent evaluations (kept across restarts)
@@ -19,13 +16,10 @@ Run locally with ``python gui.py`` (binds to 127.0.0.1 by default).
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import shutil
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import List
 
@@ -46,24 +40,6 @@ from .jobs import JobStore, start_evaluation  # noqa: E402
 
 MAX_UPLOAD_MB = 64
 _UNSAFE_CHARS = re.compile(r"[\x00-\x1f<>:\"/\\|?*]")
-
-# Sample challenges with real answers, selectable from the UI for a demo.
-DEMO_PACKS = [
-    {
-        "id": "mof_co2",
-        "title": "Conductive, hydrophobic MOF for CO₂ capture from wet flue gas",
-        "title_fa": "طراحی MOF رسانا و آب‌گریز برای جذب CO₂ از گاز دودکش مرطوب",
-        "challenge": "examples/mof_co2_capture/challenge.json",
-        "submissions": "examples/mof_co2_capture/submissions",
-    },
-    {
-        "id": "crop_water_stress",
-        "title": "Early detection of crop water stress (remote sensing)",
-        "title_fa": "تشخیص زودهنگام تنش آبی گیاهان با سنجش از دور",
-        "challenge": "config/challenge_example.json",
-        "submissions": "examples/submissions",
-    },
-]
 
 
 def safe_filename(name: str) -> str:
@@ -88,15 +64,6 @@ def _lines(value: str) -> List[str]:
     return [ln.strip() for ln in (value or "").splitlines() if ln.strip()]
 
 
-def _pack(pack_id: str):
-    return next((p for p in DEMO_PACKS if p["id"] == pack_id), None)
-
-
-def _pack_files(pack) -> List[Path]:
-    folder = _PROJECT_ROOT / pack["submissions"]
-    return discover_submission_files(folder) if folder.exists() else []
-
-
 def create_app(work_root: Path | None = None) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -110,75 +77,25 @@ def create_app(work_root: Path | None = None) -> Flask:
     def index():
         return render_template("index.html", version=__version__)
 
-    # -------------------------------------------------------------- engines
-    @app.get("/api/engines")
-    def engines():
+    # --------------------------------------------------------------- engine
+    @app.get("/api/engine")
+    def engine():
+        """Readiness of the online and offline engines, without their details."""
         from scientific_evaluator.llm_client import ollama_status
 
-        providers = []
-        for p in PROVIDERS.values():
-            providers.append({
-                "key": p.key, "label": p.label, "label_fa": p.label_fa,
-                "kind": p.kind, "offline": p.offline, "needs_key": p.needs_key,
-                "key_env": p.key_env, "has_key": bool(p.env_api_key()),
-                "model": p.resolved_model(), "base_url": p.resolved_base_url(),
-                "models": list(p.models), "signup_url": p.signup_url,
-                "note": p.note, "note_fa": p.note_fa,
-            })
+        default = PROVIDERS[default_provider_key()]
+        online = default if default.kind in ("openai", "anthropic") else PROVIDERS["avalai"]
+        model = PROVIDERS["ollama"].resolved_model()
+        status = ollama_status()
+        installed = {m["name"] for m in status["models"]}
         return jsonify({
-            "default": default_provider_key(),
-            "providers": providers,
-            "ollama": ollama_status(),
+            "mode": {"mock": "demo", "ollama": "offline"}.get(default.kind, "online"),
+            "online": {"provider": online.key, "has_key": bool(online.env_api_key())},
+            "offline": {
+                "running": status["running"],
+                "model_installed": model in installed or f"{model}:latest" in installed,
+            },
         })
-
-    @app.post("/api/test-engine")
-    def test_engine():
-        from scientific_evaluator.llm_client import build_llm_client
-
-        form = request.get_json(silent=True) or request.form
-        started = time.perf_counter()
-        try:
-            llm = build_llm_client(
-                form.get("provider"),
-                api_key=form.get("api_key") or None,
-                model=form.get("model") or None,
-                base_url=form.get("base_url") or None,
-            )
-            data = llm.complete_json(
-                "You are a connectivity check. TASK: health check. "
-                "Answer with a JSON object only.",
-                'Return exactly this JSON with a short friendly greeting in Persian: '
-                '{"ok": true, "reply": "<greeting>"}',
-            )
-        except Exception as exc:  # noqa: BLE001 - report any failure to the UI
-            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-        return jsonify({
-            "ok": True,
-            "engine": llm.description,
-            "latency_ms": int((time.perf_counter() - started) * 1000),
-            "reply": str(data.get("reply", ""))[:200],
-        })
-
-    # ----------------------------------------------------------- demo packs
-    @app.get("/api/demo-packs")
-    def demo_packs():
-        packs = []
-        for p in DEMO_PACKS:
-            files = _pack_files(p)
-            if files:
-                packs.append({
-                    "id": p["id"], "title": p["title"], "title_fa": p["title_fa"],
-                    "files": [{"name": f.name, "size": f.stat().st_size} for f in files],
-                })
-        return jsonify({"packs": packs})
-
-    @app.get("/api/example-challenge")
-    def example_challenge():
-        pack = _pack(request.args.get("pack") or DEMO_PACKS[0]["id"])
-        path = _PROJECT_ROOT / pack["challenge"] if pack else None
-        if not path or not path.exists():
-            return jsonify({"error": "example challenge not found"}), 404
-        return jsonify(json.loads(path.read_text(encoding="utf-8")))
 
     # ------------------------------------------------------------ evaluate
     @app.post("/api/evaluate")
@@ -211,12 +128,9 @@ def create_app(work_root: Path | None = None) -> Flask:
             "evaluation_notes": (request.form.get("evaluation_notes") or "").strip(),
         }
 
-        # --- validate the answers (uploads or a bundled sample pack) -------
+        # --- validate the uploads -----------------------------------------
         uploads = [f for f in request.files.getlist("submissions") if f and f.filename]
-        pack = _pack(request.form.get("sample_pack") or "")
-        if request.form.get("sample_pack") and not pack:
-            return jsonify({"error": "Unknown sample pack.", "code": "bad_pack"}), 400
-        if not uploads and not pack:
+        if not uploads:
             return jsonify({"error": "Please upload at least one .docx answer.",
                             "code": "no_files"}), 400
 
@@ -263,10 +177,7 @@ def create_app(work_root: Path | None = None) -> Flask:
         # --- persist the answers and start the job ------------------------
         job = store.create()
         sub_dir = job.work_dir / "submissions"
-        if pack:
-            for src in _pack_files(pack):
-                shutil.copy2(src, sub_dir / src.name)
-        seen: set[str] = {p.name for p in sub_dir.iterdir()}
+        seen: set[str] = set()
         for upload in uploads:
             name = safe_filename(upload.filename)
             stem, ext = os.path.splitext(name)

@@ -36,8 +36,8 @@ from .models import Challenge, EvaluationResult, Submission, SubmissionEvaluatio
 from .persian_report import render_blocks_to_docx
 from .pdf_report import pdf_engine_error_message, render_blocks_to_pdf
 from .preprocessing import build_submission
-from .report_builder import build_report_blocks
-from .report_generator import MarkdownReportGenerator, WordReportGenerator
+from .report_builder import build_english_blocks, build_report_blocks
+from .report_generator import MarkdownReportGenerator
 from .synthesis import SynthesisEngine
 
 logger = logging.getLogger("scientific_evaluator")
@@ -147,10 +147,12 @@ class ScientificEvaluationAgent:
         """Export the evaluation report.
 
         Formats:
-          * ``docx`` - Word document (Persian RTL when report_language is Persian).
-          * ``pdf``  - PDF (rendered from the Word document via LibreOffice).
+          * ``docx`` - Word document.
+          * ``pdf``  - PDF.
           * ``both`` - both .docx and .pdf (default).
           * ``md``   - Markdown (English layout; quick review/diffing).
+
+        Word and PDF are right-to-left when report_language is Persian.
 
         Returns the list of files written.
         """
@@ -170,37 +172,30 @@ class ScientificEvaluationAgent:
                 f"Unsupported report format: {fmt!r} (use 'docx', 'pdf', 'both', 'md')"
             )
 
-        # English mode keeps the original Word/Markdown generators.
-        if not persian:
-            docx_path = out_path.with_suffix(".docx")
-            WordReportGenerator().generate(result, docx_path)
-            if fmt in ("docx", "word"):
-                return [docx_path]
-            raise ValueError(
-                "PDF output is currently supported only for the Persian report. "
-                "Use fmt='docx' or fmt='md' in English mode."
-            )
-
-        # Persian mode: build charts + blocks ONCE, render docx and/or pdf from
-        # the same blocks so the two outputs are identical.
+        # Build the blocks ONCE, render docx and/or pdf from the same blocks so
+        # the two outputs are identical.
+        language = "Persian" if persian else "English"
         written: List[Path] = []
         with tempfile.TemporaryDirectory() as chart_dir:
-            chart_paths = (
-                charts_mod.generate_charts(result, chart_dir)
-                if charts_mod.charts_available() else []
-            )
-            blocks = build_report_blocks(result, chart_paths)
+            if persian:
+                chart_paths = (
+                    charts_mod.generate_charts(result, chart_dir)
+                    if charts_mod.charts_available() else []
+                )
+                blocks = build_report_blocks(result, chart_paths)
+            else:
+                blocks = build_english_blocks(result)
 
             if fmt in ("docx", "word", "both"):
-                self._progress("Rendering Persian Word report (.docx)")
+                self._progress(f"Rendering {language} Word report (.docx)")
                 written.append(
-                    render_blocks_to_docx(blocks, out_path.with_suffix(".docx"))
+                    render_blocks_to_docx(blocks, out_path.with_suffix(".docx"), rtl=persian)
                 )
             if fmt in ("pdf", "both"):
-                self._progress("Rendering Persian PDF report (.pdf)")
+                self._progress(f"Rendering {language} PDF report (.pdf)")
                 try:
                     written.append(
-                        render_blocks_to_pdf(blocks, out_path.with_suffix(".pdf"))
+                        render_blocks_to_pdf(blocks, out_path.with_suffix(".pdf"), rtl=persian)
                     )
                 except Exception as exc:  # noqa: BLE001
                     # The Word file is already written and is the primary

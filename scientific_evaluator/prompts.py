@@ -31,6 +31,12 @@ def _json(obj) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
 
 
+def _clip(text, limit: int) -> str:
+    """Shorten one item of prompt material to at most ``limit`` characters."""
+    text = str(text).strip()
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
 def _language_directive() -> str:
     """Instruction that pins the language of all human-readable output.
 
@@ -224,40 +230,62 @@ def build_synthesis_prompt(
     that ACTUALLY APPEAR in the submitted answers - it must not invent an
     unrelated new answer from scratch.
     """
+    # Strongest first, with each answer's material capped: uncapped, ten answers
+    # produced a 130k-character prompt and the model reasoned itself out of budget.
+    order = {pid: i for i, pid in enumerate(comparison.ranking)}
     ingredients = []
-    for e in evaluations:
+    for e in sorted(evaluations, key=lambda x: order.get(x.participant_id, len(order))):
+        ideas = list(dict.fromkeys(
+            e.innovation.main_innovations
+            + e.innovation.strong_technical_ideas
+            + e.innovation.unique_advantages
+        ))
         ingredients.append({
             "participant_id": e.participant_id,
-            "existing_ideas": (
-                e.innovation.main_innovations
-                + e.innovation.strong_technical_ideas
-                + e.innovation.unique_advantages
-            ),
+            "score": round(e.total_score, 1),
+            "strengths": [_clip(x, 220) for x in e.strengths[:4]],
+            "existing_ideas": [_clip(x, 220) for x in ideas[:6]],
             "idea_improvements": [
-                {"idea": imp.idea, "improvements": imp.improvements,
-                 "expected_effect": imp.expected_effect}
-                for imp in e.idea_improvements
+                {"idea": _clip(imp.idea, 160),
+                 "improvements": [_clip(x, 220) for x in imp.improvements[:2]]}
+                for imp in e.idea_improvements[:4]
             ],
         })
 
     system = (
         f"{REVIEWER_PERSONA}\n\n"
         "TASK: Produce ONE final, comprehensive solution to the challenge by "
-        "INTEGRATING the ideas that already exist in the submitted answers "
+        "INTEGRATING the approaches and strengths of ALL the submitted answers "
         "TOGETHER WITH the improvement solutions proposed for each idea.\n"
         "Hard rules:\n"
         "1. Build ONLY from ideas that actually appear in the submissions "
         "(plus the listed improvements). Do NOT invent an unrelated new answer.\n"
         "2. Explicitly COMBINE ideas from different answers so they reinforce "
-        "each other into a single coherent solution.\n"
-        "3. Fold in the improvement solutions so each borrowed idea is used in "
+        "each other into a single coherent solution. Do not list the answers one "
+        "after another and do not just pick the best one.\n"
+        "3. Use the strongest element of EVERY answer. Name the source answers in "
+        "parentheses, by their exact participant_id, wherever an element is used.\n"
+        "4. Fold in the improvement solutions so each borrowed idea is used in "
         "its strengthened form.\n"
-        "4. The result must be a credible, acceptable solution to THIS challenge.\n"
-        "Structure with clear headings: Overview; Which idea comes from which "
-        "answer (attribution); Integrated methodology; How the improvements are "
-        "applied; Why this combination solves the challenge; Feasibility & "
-        "resources; Risks & mitigations; Expected impact. Write in fluent "
-        "scientific prose (NOT JSON).\n\n"
+        "5. The result must be a credible, acceptable solution to THIS challenge. "
+        "Do not present numbers the answers did not support as established facts.\n"
+        "Use exactly these sections, with Markdown headings written in the report "
+        "language:\n"
+        "- Overview: the integrated solution in one short paragraph.\n"
+        "- Contribution of each answer: a Markdown table with ONE ROW FOR EVERY "
+        "participant_id and the columns answer, approach or strength adopted, where "
+        "it is used in the solution. If an answer adds nothing new, say so in its row.\n"
+        "- Integrated solution: the solution as ordered steps or components, each "
+        "naming the answers it draws on.\n"
+        "- How the improvements are applied.\n"
+        "- How it meets the challenge: a Markdown table mapping each objective and "
+        "expected output to the part of the solution that delivers it.\n"
+        "- Feasibility and resources.\n"
+        "- Risks and mitigations.\n"
+        "- Expected impact.\n"
+        "Length: about 1500 to 2500 words. Keep your private reasoning brief and do "
+        "not draft the full text in it. Write in fluent scientific prose (NOT JSON). "
+        "Write formulas in plain text with Unicode (e.g. Ni₃(HITP)₂, CO₂), not LaTeX.\n\n"
         f"LANGUAGE: {_language_directive()}"
     )
     user = (
@@ -337,7 +365,8 @@ def build_recommendation_prompt(
         f"{REVIEWER_PERSONA}\n\n"
         "TASK: Write a concise FINAL RECOMMENDATION for the challenge owner: "
         "who should win and why, which ideas to pursue, and what to improve "
-        "before implementation. 1-3 short paragraphs, decisive and evidence-based.\n\n"
+        "before implementation. 1-3 short paragraphs, decisive and evidence-based. "
+        "Write plain prose: NOT JSON, no headings, no Markdown.\n\n"
         f"LANGUAGE: {_language_directive()}"
     )
     user = (

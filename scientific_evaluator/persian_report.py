@@ -163,8 +163,21 @@ def _render_block(doc, block: Block):
                          align=WD_ALIGN_PARAGRAPH.CENTER)
 
 
-def render_blocks_to_docx(blocks: List[Block], out_path: Union[str, Path]) -> Path:
-    """Render report blocks to a Persian RTL .docx file."""
+def _to_left_to_right(doc) -> None:
+    """Turn a document rendered right-to-left into a left-to-right one."""
+    body = doc.element.body
+    for tag in ("w:rtl", "w:bidi", "w:bidiVisual"):
+        for element in list(body.iter(qn(tag))):
+            element.getparent().remove(element)
+    for jc in body.iter(qn("w:jc")):
+        if jc.get(qn("w:val")) == "right":
+            jc.set(qn("w:val"), "left")
+
+
+def render_blocks_to_docx(
+    blocks: List[Block], out_path: Union[str, Path], rtl: bool = True
+) -> Path:
+    """Render report blocks to a .docx file (right-to-left by default)."""
     doc = Document()
     normal = doc.styles["Normal"]
     normal.font.name = SETTINGS.latin_font
@@ -172,6 +185,8 @@ def render_blocks_to_docx(blocks: List[Block], out_path: Union[str, Path]) -> Pa
 
     for block in blocks:
         _render_block(doc, block)
+    if not rtl:
+        _to_left_to_right(doc)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

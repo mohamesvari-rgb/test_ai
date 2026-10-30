@@ -84,7 +84,7 @@ if ($Gguf) {
     & $exe create $Model -f $modelfile
 } else {
     Write-Host "Downloading model '$Model' (one time; can take a while) ..." -ForegroundColor Cyan
-    Write-Host "Tip: to store models on another drive, set the OLLAMA_MODELS environment variable first (e.g. D:\ollama-models)."
+    Write-Host "Tip: to store models on another drive, change 'Model location' in the Ollama app's Settings first (e.g. D:\ollama-models)."
     & $exe pull $Model
 }
 if ($LASTEXITCODE -ne 0) {
@@ -96,4 +96,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Set-EnvValue "OLLAMA_MODEL" $Model
 Write-Host "`nOffline model ready: $Model  (saved to .env as OLLAMA_MODEL)" -ForegroundColor Green
-Write-Host "Start the demo with start.bat and choose the 'Offline' engine."
+Write-Host "Start the app with start.bat and choose Offline in the AI engine section."

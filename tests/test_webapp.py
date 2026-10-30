@@ -57,14 +57,42 @@ def test_index_page_renders():
     assert 'id="form"' in body
 
 
-def test_example_challenge_endpoint():
+def test_engine_endpoint_reports_both_modes():
     import tempfile
     c = _client(tempfile.mkdtemp())
-    r = c.get("/api/example-challenge")
-    assert r.status_code == 200
-    data = r.get_json()
-    for key in ("title", "field", "background", "objectives"):
-        assert data.get(key)
+    data = c.get("/api/engine").get_json()
+    assert data["mode"] in ("online", "offline", "demo")
+    assert set(data["online"]) == {"provider", "has_key"}
+    assert set(data["offline"]) == {"running", "model_installed"}
+
+
+def test_offline_engine_needs_no_api_key():
+    """Choosing offline starts a job without a key; a stopped server is reported."""
+    import os
+    import tempfile
+    saved = os.environ.get("OLLAMA_BASE_URL")
+    os.environ["OLLAMA_BASE_URL"] = "http://127.0.0.1:9"
+    try:
+        c = _client(tempfile.mkdtemp())
+        assert c.get("/api/engine").get_json()["offline"]["running"] is False
+        r = c.post("/api/evaluate", data={
+            "title": "t", "field": "f", "background": "b", "objectives": "o1",
+            "provider": "ollama",
+            "submissions": (io.BytesIO(_docx_bytes()), "answer.docx"),
+        }, content_type="multipart/form-data")
+        assert r.status_code == 200, r.get_data(as_text=True)
+        job_id = r.get_json()["job_id"]
+        for _ in range(60):
+            s = c.get(f"/api/status/{job_id}").get_json()
+            if s["status"] in ("done", "error"):
+                break
+            time.sleep(0.5)
+        assert s["status"] == "error" and "not running" in s["error"], s["error"]
+    finally:
+        if saved is None:
+            os.environ.pop("OLLAMA_BASE_URL", None)
+        else:
+            os.environ["OLLAMA_BASE_URL"] = saved
 
 
 def test_missing_fields_rejected():
@@ -144,6 +172,51 @@ def test_full_gui_flow_with_mock():
     # Cleanup removes the job.
     assert c.post(f"/api/cleanup/{job_id}").status_code == 200
     assert c.get(f"/api/status/{job_id}").status_code == 404
+
+
+def _run_job(c, language, fmt):
+    r = c.post("/api/evaluate", data={
+        "title": "t", "field": "f", "background": "b", "objectives": "o1",
+        "language": language, "format": fmt, "mock": "on",
+        "submissions": [(io.BytesIO(_docx_bytes()), "answer.docx")],
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200, r.get_data(as_text=True)
+    job_id = r.get_json()["job_id"]
+    for _ in range(120):
+        s = c.get(f"/api/status/{job_id}").get_json()
+        if s["status"] in ("done", "error"):
+            return job_id, s
+        time.sleep(0.5)
+    raise AssertionError("job did not finish")
+
+
+def test_english_pdf_only_report():
+    """Regression: English + PDF stopped the run after the whole evaluation."""
+    import tempfile
+    c = _client(tempfile.mkdtemp())
+    job_id, s = _run_job(c, "English", "pdf")
+    assert s["status"] == "done", s.get("error")
+    assert sorted(s["files"]) == ["report.pdf", "result.json"], s["files"]
+    assert c.get(f"/api/download/{job_id}/report.pdf").get_data()[:4] == b"%PDF"
+
+
+def test_failed_report_keeps_the_results():
+    import tempfile
+    from scientific_evaluator.agent import ScientificEvaluationAgent
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("no renderer")
+
+    original = ScientificEvaluationAgent.export_report
+    ScientificEvaluationAgent.export_report = boom
+    try:
+        _job_id, s = _run_job(_client(tempfile.mkdtemp()), "Persian", "both")
+    finally:
+        ScientificEvaluationAgent.export_report = original
+    assert s["status"] == "done", s.get("error")
+    assert s["files"] == ["result.json"]
+    assert s["ranking"] and s["summary"]
+    assert any(m.startswith("WARNING: the report file") for m in s["messages"])
 
 
 if __name__ == "__main__":

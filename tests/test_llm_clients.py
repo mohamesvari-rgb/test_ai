@@ -33,6 +33,8 @@ class _FakeAPI(BaseHTTPRequestHandler):
 
     requests: list = []
     reject_json_mode = False
+    truncate_below = 0              # imitate finish_reason=length under this limit
+    empty_replies = 0               # answer this many requests with empty content
     installed_models = ["qwen3.5:9b"]
 
     def log_message(self, *args):  # keep test output quiet
@@ -65,8 +67,15 @@ class _FakeAPI(BaseHTTPRequestHandler):
                 return self._send(401, {"error": {"message": "invalid api key"}})
             if self.reject_json_mode and "response_format" in payload:
                 return self._send(400, {"error": {"message": "response_format not supported"}})
+            if payload["max_tokens"] < self.truncate_below:
+                return self._send(200, {"choices": [{"finish_reason": "length", "message": {
+                    "role": "assistant", "content": '{"criterion_scores": {"rel'}}]})
+            if type(self).empty_replies > 0:
+                type(self).empty_replies -= 1
+                return self._send(200, {"choices": [{"finish_reason": "stop", "message": {
+                    "role": "assistant", "content": ""}}]})
             content = "<think>internal reasoning</think>" + _MOCK.complete_text(system, user)
-            return self._send(200, {"choices": [{"message": {"role": "assistant", "content": content}}]})
+            return self._send(200, {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}]})
 
         if self.path == "/api/chat":
             if payload["model"] not in self.installed_models:
@@ -95,7 +104,60 @@ def test_openai_compatible_json_and_reasoning_stripped():
     path, headers, payload = _FakeAPI.requests[-1]
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["model"] == "deepseek-chat"
-    assert payload["max_tokens"] == SETTINGS.max_tokens
+    assert payload["max_tokens"] == SETTINGS.online_max_tokens
+
+
+def test_cut_off_reply_retries_with_a_larger_limit():
+    _FakeAPI.requests.clear()
+    _FakeAPI.truncate_below = SETTINGS.online_max_tokens + 1
+    try:
+        client = OpenAICompatibleLLMClient(BASE + "/v1", "good-key", "deepseek-chat")
+        data = client.complete_json("TASK: Score ONE submission", "submission text")
+    finally:
+        _FakeAPI.truncate_below = 0
+    assert "criterion_scores" in data
+    limits = [payload["max_tokens"] for _, _, payload in _FakeAPI.requests]
+    assert limits == [SETTINGS.online_max_tokens, SETTINGS.online_max_tokens * 2], limits
+
+
+def test_empty_text_reply_is_retried_not_accepted():
+    _FakeAPI.requests.clear()
+    _FakeAPI.empty_replies = 1
+    client = OpenAICompatibleLLMClient(BASE + "/v1", "good-key", "deepseek-chat")
+    text = client.complete_text("TASK: Produce ONE final", "x")
+    assert text.strip(), "an empty reply must not pass as the solution"
+    assert len(_FakeAPI.requests) == 2
+
+    _FakeAPI.empty_replies = 99
+    try:
+        client.complete_text("TASK: Produce ONE final", "x")
+    except LLMError as exc:
+        assert "empty" in str(exc)
+    else:
+        raise AssertionError("a permanently empty reply must stop the run")
+    finally:
+        _FakeAPI.empty_replies = 0
+
+
+def test_synthesis_prompt_stays_compact_and_covers_every_answer():
+    from scientific_evaluator.models import (
+        Challenge, ComparisonResult, IdeaImprovement, InnovationProfile, SubmissionEvaluation,
+    )
+    from scientific_evaluator.prompts import build_synthesis_prompt
+
+    long_text = "متن طولانی " * 200
+    evaluations = [SubmissionEvaluation(
+        participant_id=f"answer_{i}", title="t", strengths=[long_text] * 8,
+        innovation=InnovationProfile(main_innovations=[f"{long_text}{n}" for n in range(12)]),
+        idea_improvements=[IdeaImprovement(idea=long_text, improvements=[long_text] * 6)] * 8,
+    ) for i in range(10)]
+    comparison = ComparisonResult(ranking=[f"answer_{i}" for i in reversed(range(10))])
+    challenge = Challenge(title="t", field="f", background="b", objectives=["o"])
+    system, user = build_synthesis_prompt(challenge, evaluations, comparison)
+    assert len(user) < 70_000, len(user)
+    assert all(f"answer_{i}" in user for i in range(10))
+    assert user.index("answer_9") < user.index("answer_0"), "strongest answer comes first"
+    assert "ONE ROW FOR EVERY" in system
 
 
 def test_openai_compatible_falls_back_without_json_mode():
@@ -194,8 +256,8 @@ def test_full_pipeline_through_openai_client():
     )
     result = agent.run(root / "examples" / "mof_co2_capture" / "submissions")
     ids = {e.participant_id for e in result.evaluations}
-    assert ids == {"claude", "DeepSeek", "Gemini", "GLM", "o4", "qwen"}, ids
-    assert sum(m.startswith("Finished ") for m in messages) == 6
+    assert ids == {"claude", "Gemini", "GLM", "qwen"}, ids
+    assert sum(m.startswith("Finished ") for m in messages) == 4
     assert result.synthesized_solution
     with tempfile.TemporaryDirectory() as tmp:
         written = agent.export_report(result, Path(tmp) / "report", fmt="docx")

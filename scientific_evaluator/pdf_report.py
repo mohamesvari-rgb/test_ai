@@ -69,7 +69,7 @@ def _font_face(family: str, weight: str, uri: Optional[str],
     )
 
 
-def _build_css(embed_fonts: bool = False) -> str:
+def _build_css(embed_fonts: bool = False, rtl: bool = True) -> str:
     """CSS with two font families.
 
     Latin font ('TNR' = Times New Roman / Liberation Serif) is listed first; it
@@ -93,12 +93,14 @@ def _build_css(embed_fonts: bool = False) -> str:
         _font_face("TNR", "normal", uri(la_reg), latin_range),
         _font_face("TNR", "bold", uri(la_bold), latin_range) if la_bold != la_reg else "",
     ]))
+    direction, align = ("rtl", "right") if rtl else ("ltr", "left")
+    list_padding = "padding-right: 22px; padding-left: 0" if rtl else "padding-left: 22px"
     return f"""
 {faces}
 @page {{ size: A4; margin: 2cm 1.8cm; }}
 * {{ box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 body {{
-    margin: 0; direction: rtl; text-align: right;
+    margin: 0; direction: {direction}; text-align: {align};
     font-family: 'TNR', 'BNazanin', serif;
     font-size: {SETTINGS.base_font_size}pt; line-height: 1.6; color: #1a1a1a;
 }}
@@ -108,11 +110,11 @@ h1 {{ color: #1F4E79; font-size: {SETTINGS.heading_font_size + 3}pt;
       border-bottom: 2px solid #D9E2F3; padding-bottom: 4px; margin-top: 22px; }}
 h2 {{ color: #1F4E79; font-size: {SETTINGS.heading_font_size}pt; margin-top: 14px; }}
 p {{ margin: 6px 0; text-align: justify; }}
-ul {{ margin: 6px 0; padding-right: 22px; padding-left: 0; }}
+ul {{ margin: 6px 0; {list_padding}; }}
 li {{ margin: 3px 0; }}
 table {{ border-collapse: collapse; width: 100%; margin: 10px 0;
          font-size: {SETTINGS.base_font_size - 1}pt; }}
-th, td {{ border: 1px solid #7f7f7f; padding: 5px 7px; text-align: right;
+th, td {{ border: 1px solid #7f7f7f; padding: 5px 7px; text-align: {align};
           vertical-align: top; }}
 th {{ background: #D9E2F3; color: #1F4E79; font-weight: bold; }}
 tr:nth-child(even) td {{ background: #f4f7fb; }}
@@ -295,16 +297,19 @@ def _print_with_chromium(browser: str, document: str, out_path: Path) -> Path:
     return out_path
 
 
-def render_blocks_to_pdf(blocks: List[Block], out_path: Union[str, Path]) -> Path:
-    """Render report blocks to a Persian RTL PDF (weasyprint, else Edge/Chrome)."""
+def render_blocks_to_pdf(
+    blocks: List[Block], out_path: Union[str, Path], rtl: bool = True
+) -> Path:
+    """Render report blocks to a PDF, right-to-left by default (weasyprint, else Edge/Chrome)."""
     body = "\n".join(_block_html(b) for b in blocks)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    html_attrs = "lang='fa' dir='rtl'" if rtl else "lang='en' dir='ltr'"
 
     def document(embed_fonts: bool) -> str:
         return (
-            "<!DOCTYPE html><html lang='fa' dir='rtl'><head><meta charset='utf-8'>"
-            f"<style>{_build_css(embed_fonts)}</style></head><body>{body}</body></html>"
+            f"<!DOCTYPE html><html {html_attrs}><head><meta charset='utf-8'>"
+            f"<style>{_build_css(embed_fonts, rtl)}</style></head><body>{body}</body></html>"
         )
 
     try:

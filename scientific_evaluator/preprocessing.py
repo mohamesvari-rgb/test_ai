@@ -50,7 +50,8 @@ def _detect_title(text: str, fallback: str) -> str:
     """Heuristically pick a title: first non-empty, reasonably short line."""
     for line in text.splitlines():
         line = line.strip()
-        if 3 <= len(line) <= 160:
+        # Skip Markdown rules such as "---", which are not a title.
+        if 3 <= len(line) <= 160 and not re.fullmatch(r"[-*_=\s]+", line):
             return line
     return fallback
 

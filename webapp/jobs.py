@@ -128,6 +128,10 @@ class JobStore:
 def build_summary(result) -> Dict[str, Any]:
     """Compact, JSON-friendly view of a result for the results dashboard."""
     from scientific_evaluator.config import RUBRIC
+    from scientific_evaluator.text_cleanup import clean_inline, clean_math
+
+    def items(values, limit):
+        return [clean_inline(v) for v in (values or [])[:limit]]
 
     comparison = result.comparison
     participants = []
@@ -135,16 +139,16 @@ def build_summary(result) -> Dict[str, Any]:
         participants.append({
             "rank": rank,
             "participant_id": e.participant_id,
-            "title": e.title,
+            "title": clean_inline(e.title),
             "score": round(e.total_score, 1),
             "penalty": e.penalty,
             "scores": {c.key: c.raw_score for c in e.criterion_scores},
-            "summary": e.summary,
-            "strengths": e.strengths[:5],
-            "weaknesses": e.weaknesses[:5],
-            "innovations": (e.innovation.main_innovations or [])[:4],
-            "salient": comparison.salient_points.get(e.participant_id, [])[:4],
-            "distinctive": comparison.distinctive_points.get(e.participant_id, [])[:4],
+            "summary": clean_inline(e.summary),
+            "strengths": items(e.strengths, 5),
+            "weaknesses": items(e.weaknesses, 5),
+            "innovations": items(e.innovation.main_innovations, 4),
+            "salient": items(comparison.salient_points.get(e.participant_id), 4),
+            "distinctive": items(comparison.distinctive_points.get(e.participant_id), 4),
         })
     return {
         "criteria": [
@@ -153,11 +157,12 @@ def build_summary(result) -> Dict[str, Any]:
             for c in RUBRIC
         ],
         "participants": participants,
-        "rationale": comparison.rationale,
-        "overlapping_ideas": comparison.overlapping_ideas[:6],
-        "complementary_ideas": comparison.complementary_ideas[:6],
-        "synthesized_solution": result.synthesized_solution,
-        "final_recommendation": result.final_recommendation,
+        "rationale": clean_inline(comparison.rationale),
+        "overlapping_ideas": items(comparison.overlapping_ideas, 6),
+        "complementary_ideas": items(comparison.complementary_ideas, 6),
+        # Keep the Markdown structure; the page renders headings, lists and tables.
+        "synthesized_solution": clean_math(result.synthesized_solution),
+        "final_recommendation": clean_math(result.final_recommendation),
     }
 
 
@@ -166,6 +171,7 @@ def run_evaluation(job: Job, challenge: dict, options: dict) -> None:
     from scientific_evaluator.agent import ScientificEvaluationAgent
     from scientific_evaluator.config import SETTINGS
     from scientific_evaluator.llm_client import build_llm_client
+    from scientific_evaluator.text_cleanup import clean_inline
 
     with _RUN_LOCK:
         try:
@@ -193,16 +199,10 @@ def run_evaluation(job: Job, challenge: dict, options: dict) -> None:
             sub_dir = job.work_dir / "submissions"
             result = agent.run(sub_dir)
 
-            out_base = job.work_dir / "output" / "report"
-            written = agent.export_report(
-                result, out_base, fmt=options.get("format", "both")
-            )
-            job.files = [Path(p).name for p in written]
-
             job.ranking = [
                 {
                     "participant_id": e.participant_id,
-                    "title": e.title,
+                    "title": clean_inline(e.title),
                     "score": round(e.total_score, 1),
                 }
                 for e in result.ranked_evaluations()
@@ -215,6 +215,18 @@ def run_evaluation(job: Job, challenge: dict, options: dict) -> None:
                 json.dumps(result.to_dict(), indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+
+            # The evaluation may have taken an hour offline, so a failed report
+            # must not lose it: the results stay available either way.
+            try:
+                written = agent.export_report(
+                    result, job.work_dir / "output" / "report",
+                    fmt=options.get("format", "both"),
+                )
+                job.files = [Path(p).name for p in written]
+            except Exception as exc:  # noqa: BLE001
+                job.log(f"WARNING: the report file could not be created: {exc}")
+                traceback.print_exc()
             job.files.append(json_path.name)
 
             job.log("Done.")

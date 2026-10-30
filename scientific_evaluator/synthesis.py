@@ -14,9 +14,11 @@ from __future__ import annotations
 
 from typing import List
 
+from .config import SETTINGS
 from .llm_client import BaseLLMClient
 from .models import Challenge, ComparisonResult, SubmissionEvaluation
 from .prompts import build_recommendation_prompt, build_synthesis_prompt
+from .text_cleanup import localize_section_names, unwrap_json_prose
 
 
 class SynthesisEngine:
@@ -32,7 +34,10 @@ class SynthesisEngine:
         comparison: ComparisonResult,
     ) -> str:
         system, user = build_synthesis_prompt(challenge, evaluations, comparison)
-        return self.llm.complete_text(system, user).strip()
+        solution = self.llm.complete_text(system, user).strip()
+        if SETTINGS.report_language.lower().startswith("persian"):
+            solution = localize_section_names(solution)
+        return solution
 
     def final_recommendation(
         self,
@@ -41,4 +46,4 @@ class SynthesisEngine:
         comparison: ComparisonResult,
     ) -> str:
         system, user = build_recommendation_prompt(challenge, evaluations, comparison)
-        return self.llm.complete_text(system, user).strip()
+        return unwrap_json_prose(self.llm.complete_text(system, user))

@@ -220,6 +220,11 @@ class Settings:
     # Lower temperature -> more consistent, repeatable scoring.
     temperature: float = 0.2
     max_tokens: int = 8192
+    # Output limit for OpenAI-compatible APIs. Reasoning models such as DeepSeek
+    # count their hidden reasoning against it (5k per call, 24k+ on the synthesis
+    # of many answers), so a low limit returns cut-off or even empty replies. It
+    # is only a ceiling: unused tokens cost nothing.
+    online_max_tokens: int = field(default_factory=lambda: _env_int("LLM_MAX_TOKENS", 48000))
     # Submissions evaluated concurrently with online APIs. Local (Ollama)
     # models always run one request at a time.
     max_parallel: int = field(default_factory=lambda: _env_int("LLM_MAX_PARALLEL", 4))
@@ -265,16 +270,10 @@ class ProviderPreset:
 
     key: str
     label: str
-    label_fa: str
     kind: str
     base_url: str = ""
     model: str = ""
     key_env: str = ""          # env var with the API key ("" = no key needed)
-    offline: bool = False
-    signup_url: str = ""
-    models: tuple = ()         # suggestions shown in the GUI
-    note: str = ""
-    note_fa: str = ""
 
     @property
     def needs_key(self) -> bool:
@@ -296,63 +295,42 @@ PROVIDERS: Dict[str, ProviderPreset] = {p.key: p for p in [
     ProviderPreset(
         key="avalai",
         label="AvalAI — Iranian API gateway (pay in Toman)",
-        label_fa="اول‌ای‌آی (AvalAI) — درگاه ایرانی، پرداخت ریالی",
         kind="openai",
         base_url="https://api.avalai.ir/v1",
         model="deepseek-chat",
         key_env="AVALAI_API_KEY",
-        signup_url="https://chat.avalai.ir/platform/home",
-        models=("deepseek-chat", "deepseek-v4.1-flash", "deepseek-reasoner"),
-        note="OpenAI-compatible; free starter credit on sign-up.",
-        note_fa="سازگار با OpenAI؛ اعتبار رایگان اولیه پس از ثبت‌نام.",
     ),
     ProviderPreset(
         key="deepseek",
         label="DeepSeek — official API",
-        label_fa="DeepSeek — API رسمی",
         kind="openai",
         base_url="https://api.deepseek.com",
         model="deepseek-chat",
         key_env="DEEPSEEK_API_KEY",
-        signup_url="https://platform.deepseek.com",
-        models=("deepseek-chat", "deepseek-reasoner"),
     ),
     ProviderPreset(
         key="ollama",
         label="Offline — Ollama on this computer",
-        label_fa="آفلاین — Ollama روی همین رایانه",
         kind="ollama",
         base_url="http://127.0.0.1:11434",
         model="qwen3.5:9b",
-        offline=True,
-        signup_url="https://ollama.com/download/windows",
-        models=("qwen3.5:9b", "qwen3.5:4b", "gemma3:12b"),
-        note="No internet needed; slower than online APIs.",
-        note_fa="بدون نیاز به اینترنت؛ کندتر از API آنلاین.",
     ),
     ProviderPreset(
         key="custom",
         label="Other OpenAI-compatible API",
-        label_fa="سایر APIهای سازگار با OpenAI",
         kind="openai",
         key_env="CUSTOM_API_KEY",
-        note="OpenRouter, LM Studio, vLLM, other gateways…",
-        note_fa="OpenRouter، LM Studio، vLLM و سایر درگاه‌ها",
     ),
     ProviderPreset(
         key="anthropic",
         label="Anthropic Claude",
-        label_fa="Anthropic Claude",
         kind="anthropic",
         key_env="ANTHROPIC_API_KEY",
-        signup_url="https://console.anthropic.com",
     ),
     ProviderPreset(
         key="mock",
         label="Demo mode — placeholder output (no AI)",
-        label_fa="حالت نمایشی — خروجی نمونه (بدون هوش مصنوعی)",
         kind="mock",
-        offline=True,
     ),
 ]}
 

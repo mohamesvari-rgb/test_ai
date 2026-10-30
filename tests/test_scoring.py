@@ -200,7 +200,7 @@ def test_word_still_delivered_when_pdf_engine_missing():
 
     original = agent_mod.render_blocks_to_pdf
 
-    def boom(_blocks, _path):
+    def boom(_blocks, _path, **_options):
         raise OSError("cannot load library 'libgobject-2.0-0': error 0x7e")
 
     agent_mod.render_blocks_to_pdf = boom
@@ -218,6 +218,42 @@ def test_word_still_delivered_when_pdf_engine_missing():
     warning = "\n".join(messages)
     assert "WARNING" in warning
     assert "Word only" in warning
+
+
+def test_english_report_is_clean_and_left_to_right():
+    import tempfile
+
+    import docx
+    from docx.oxml.ns import qn
+
+    from scientific_evaluator.config import SETTINGS
+    from scientific_evaluator.preprocessing import _detect_title
+
+    assert _detect_title("---\n\nReal title\n", "fallback") == "Real title"
+
+    _agent, result, _subs = _demo_result(2)
+    result.synthesized_solution = (
+        "## Overview\n**Bold** with $CO_2$\n\n| Answer | Use |\n|---|---|\n| A | B |\n"
+    )
+    saved = SETTINGS.report_language
+    SETTINGS.report_language = "English"
+    try:
+        out = Path(tempfile.mkdtemp()) / "report"
+        written = _agent.export_report(result, out, fmt="both")
+    finally:
+        SETTINGS.report_language = saved
+
+    assert sorted(p.suffix for p in written) == [".docx", ".pdf"]
+    assert out.with_suffix(".pdf").read_bytes()[:4] == b"%PDF"
+
+    document = docx.Document(str(out.with_suffix(".docx")))
+    text = "\n".join(p.text for p in document.paragraphs)
+    assert "Scientific Evaluation Report" in text and "Bold with CO₂" in text
+    assert "**" not in text and "$" not in text
+    assert ["Answer", "Use"] == [c.text for c in document.tables[-1].rows[0].cells]
+    body = document.element.body
+    for tag in ("w:rtl", "w:bidi", "w:bidiVisual"):
+        assert next(body.iter(qn(tag)), None) is None, tag
 
 
 def test_pdf_error_message_is_actionable():
@@ -252,6 +288,47 @@ def test_persian_report_export_pdf():
         data = out.read_bytes()
         assert data[:4] == b"%PDF"          # valid PDF header
         assert len(data) > 3000             # non-trivial content
+
+
+def test_markdown_and_latex_become_clean_report_blocks():
+    from scientific_evaluator.report_builder import (
+        Bullets, Heading, Para, Table, _clean_block, _markdown_blocks,
+    )
+    from scientific_evaluator.text_cleanup import clean_inline, unwrap_json_prose
+
+    assert clean_inline("**$Ni_3(THT)_2$** و $\\text{CO}_2$") == "Ni₃(THT)₂ و CO₂"
+    assert clean_inline("$\\geq 1 \\times 10^{-3}$") == "≥ 1 × 10⁻³"
+
+    blocks = [_clean_block(b) for b in _markdown_blocks(
+        "## مرور **کلی**\n\nمتن\n---\n- مورد ۱\n۲. مورد ۲\n\n"
+        "| مشخصه | هدف |\n|---|---|\n| BET | > ۸۰۰ |\n\nپایان"
+    )]
+    assert [type(b) for b in blocks] == [Heading, Para, Bullets, Table, Para]
+    assert blocks[0].text == "مرور کلی"
+    assert blocks[2].items == ["مورد ۱", "مورد ۲"]
+    assert blocks[3].headers == ["مشخصه", "هدف"] and blocks[3].rows == [["BET", "> ۸۰۰"]]
+
+    assert unwrap_json_prose('{"winner": "الف", "recommendation": "ب"}') == "الف\n\nب"
+    assert unwrap_json_prose("متن عادی") == "متن عادی"
+
+
+def test_english_section_names_are_translated_for_persian_reports():
+    from scientific_evaluator.text_cleanup import clean_inline, localize_section_names
+
+    assert clean_inline("# پیشنهاد طراحی") == "پیشنهاد طراحی"
+
+    text = localize_section_names(
+        "# عنوان گزارش\n\n## 1. Overview\nمتن\n\n"
+        "## **Contribution of each answer**\n\n"
+        "| participant_id | answer, approach or strength adopted |\n| :--- | :--- |\n"
+        "| **GLM** | participant_id |\n\n"
+        "## Something else\n"
+    )
+    assert "## نمای کلی\n" in text
+    assert "## سهم هر پاسخ\n" in text
+    assert "\n\n| پاسخ | رویکرد یا نقطه قوت به‌کاررفته |\n" in text
+    assert "# عنوان گزارش" in text and "## Something else" in text
+    assert "| **GLM** | participant_id |" in text       # body rows stay as written
 
 
 if __name__ == "__main__":
